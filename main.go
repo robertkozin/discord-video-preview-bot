@@ -80,7 +80,7 @@ func preview(url string) (path string) {
 		"yt-dlp",
 		"--downloader", "ffmpeg", // Ffmpeg lets us limit video duration vs native downloader
 		"--downloader-args", "ffmpeg:-to 60 -loglevel warning", // Limit to 60s
-		"-S", "+vcodev:avc", // Prefer H264
+		"-S", "+vcodec:avc", // Prefer H264
 		// Assume that the places we're downloading from already optimize for the web (faststart + H264)
 		"--no-playlist",
 		"-o", outputFile,
