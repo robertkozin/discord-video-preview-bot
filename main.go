@@ -20,6 +20,12 @@ var PreviewMatch = regexp.MustCompile(`\S+(?:tiktok\.com|instagram\.com|twitter\
 
 var BotId string
 
+var SupressEmbeds = &struct {
+	Flags int `json:"flags"`
+}{
+	Flags: 1 << 2,
+}
+
 func main() {
 	os.MkdirAll(PreviewDir, os.ModePerm)
 
@@ -72,6 +78,7 @@ func messageCreate(s *discordgo.Session, m *discordgo.MessageCreate) {
 		fmt.Printf("err sending message: %v\n", err)
 	}
 
+	_, _ = s.RequestWithBucketID("PATCH", discordgo.EndpointChannelMessage(m.ChannelID, m.ID), SupressEmbeds, discordgo.EndpointChannelMessage(m.ChannelID, ""))
 }
 
 func preview(url string) (path string) {
