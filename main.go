@@ -3,7 +3,6 @@ package main
 import (
 	"crypto/md5"
 	"fmt"
-	"log"
 	"os"
 	"os/exec"
 	"os/signal"
@@ -38,10 +37,11 @@ func main() {
 
 	err := dg.Open()
 	if err != nil {
-		log.Fatalln(err)
+		fmt.Printf("err starting discordgo: %v\n", err)
+		return
 	}
 
-	log.Println("Bot is now running. Press CTRL-C to exit.")
+	fmt.Println("Bot is now running. Press CTRL-C to exit.")
 	sc := make(chan os.Signal, 1)
 	signal.Notify(sc, syscall.SIGINT, syscall.SIGTERM, os.Interrupt, os.Kill)
 	<-sc
@@ -68,7 +68,10 @@ func messageCreate(s *discordgo.Session, m *discordgo.MessageCreate) {
 		return
 	}
 
-	s.ChannelMessageSendReply(m.ChannelID, PreviewBaseUrl+output, m.MessageReference)
+	if _, err := s.ChannelMessageSendReply(m.ChannelID, PreviewBaseUrl+output, m.MessageReference); err != nil {
+		fmt.Printf("err sending message: %v\n", err)
+	}
+
 }
 
 func preview(url string) (path string) {
