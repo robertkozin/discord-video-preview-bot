@@ -16,6 +16,7 @@ var DiscordToken = mustGetEnvString("DISCORD_TOKEN")
 var PreviewDir = mustGetEnvString("PREVIEW_DIR")
 var PreviewBaseUrl = mustGetEnvString("PREVIEW_BASE_URL")
 
+// TODO: Improve this to include short links
 var PreviewMatch = regexp.MustCompile(`\S+(?:tiktok\.com|instagram\.com|twitter\.com|reddit\.com)\S+`)
 
 var BotId string
@@ -69,6 +70,9 @@ func messageCreate(s *discordgo.Session, m *discordgo.MessageCreate) {
 		return
 	}
 
+	// TODO: Support multiple links?
+	// TODO: Process messages sync then handle links async
+
 	output := preview(link)
 	if output == "" {
 		return
@@ -79,6 +83,8 @@ func messageCreate(s *discordgo.Session, m *discordgo.MessageCreate) {
 	}
 
 	_, _ = s.RequestWithBucketID("PATCH", discordgo.EndpointChannelMessage(m.ChannelID, m.ID), SupressEmbeds, discordgo.EndpointChannelMessage(m.ChannelID, ""))
+
+	// TODO: Clean output dir
 }
 
 func preview(url string) (path string) {
