@@ -68,7 +68,7 @@ func messageCreate(s *discordgo.Session, m *discordgo.MessageCreate) {
 		return
 	}
 
-	if _, err := s.ChannelMessageSendReply(m.ChannelID, PreviewBaseUrl+output, m.MessageReference); err != nil {
+	if _, err := s.ChannelMessageSendReply(m.ChannelID, PreviewBaseUrl+output, m.Reference()); err != nil {
 		fmt.Printf("err sending message: %v\n", err)
 	}
 
