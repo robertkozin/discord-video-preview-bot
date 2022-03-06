@@ -79,11 +79,12 @@ func preview(url string) (path string) {
 
 	cmd := exec.Command(
 		"yt-dlp",
-		"-f", "mp4",
+		"-f", "mp4 +vcodec:avc",
 		"--merge-output-format", "mp4",
 		"--remux-video", "mp4",
 		"--recode-video", "mp4",
 		"--no-playlist",
+		"--ppa", "ffmpeg:-movflags +faststart",
 		"-o", outputFile,
 		"-P", PreviewDir,
 		url,
