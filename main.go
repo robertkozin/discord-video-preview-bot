@@ -1,7 +1,7 @@
 package main
 
 import (
-	"crypto/md5"
+	"crypto/sha1"
 	"fmt"
 	"os"
 	"os/exec"
@@ -75,7 +75,7 @@ func messageCreate(s *discordgo.Session, m *discordgo.MessageCreate) {
 }
 
 func preview(url string) (path string) {
-	hashUrl := fmt.Sprintf("%x", md5.Sum([]byte(url)))
+	hashUrl := fmt.Sprintf("%x", sha1.Sum([]byte(url)))[:7]
 
 	outputFile := hashUrl + ".mp4"
 
