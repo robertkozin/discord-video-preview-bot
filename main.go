@@ -68,8 +68,7 @@ func messageCreate(s *discordgo.Session, m *discordgo.MessageCreate) {
 		return
 	}
 
-	s.ChannelMessageSend(m.ChannelID, PreviewBaseUrl+output)
-
+	s.ChannelMessageSendReply(m.ChannelID, PreviewBaseUrl+output, m.MessageReference)
 }
 
 func preview(url string) (path string) {
