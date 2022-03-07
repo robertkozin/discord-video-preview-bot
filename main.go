@@ -29,6 +29,14 @@ var SupressEmbeds = &struct {
 
 func main() {
 	os.MkdirAll(PreviewDir, os.ModePerm)
+	// Start cleaning task
+	go func() {
+		for range time.Tick(1 * time.Hour) {
+			if err := clean(previewDir, 10); err != nil {
+				fmt.Println("err cleaning:", err)
+			}
+		}
+	}()
 
 	dg, _ := discordgo.New("Bot " + DiscordToken)
 
@@ -112,6 +120,44 @@ func preview(url string) (path string) {
 	}
 
 	return outputFile
+}
+
+// If size of directory is greater than max then remove ~20% of the oldest files.
+// Why leave 20% files? I don't know, 80/20 principal?
+// Could be improved by using access time, but I'm not sure how I would get that information.
+func clean(dir string, maxSizeGigabytes int) error {
+	files, err := ioutil.ReadDir(dir)
+	if err != nil {
+		return err
+	}
+
+	var maxSizeBytes int64 = int64(maxSizeGigabytes) * 1_000_000_000
+
+	var totalDirSize int64
+	for _, file := range files {
+		totalDirSize += file.Size()
+	}
+
+	if totalDirSize <= maxSizeBytes {
+		return nil
+	}
+
+	sort.Slice(files, func(i, j int) bool { // Sort most recent first
+		return files[i].ModTime().After(files[j].ModTime())
+	})
+
+	var runningDirSize int64 = 0
+	var targetDirSize int64 = int64(float64(maxSizeBytes) * 0.80)
+	for _, file := range files {
+		runningDirSize += file.Size()
+		if runningDirSize > targetDirSize {
+			if err = os.Remove(filepath.Join(dir, file.Name())); err != nil {
+				return err
+			}
+		}
+	}
+
+	return nil
 }
 
 func mustGetEnvString(key string) (value string) {
