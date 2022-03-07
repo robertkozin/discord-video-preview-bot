@@ -109,6 +109,7 @@ func preview(url string) (path string) {
 		"--no-mtime", // Don't make output mtime the date of the video
 		"--no-part", // Seems like yt-dlp downloads videos as .part then renames. Don't think it's necessary in our case.
 		"--no-playlist", // Don't download playlists, only single videos.
+		"--cookies", "./cookies.txt",
 		"-o", outputFile,
 		"-P", previewDir,
 		url,
