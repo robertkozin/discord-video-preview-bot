@@ -3,32 +3,33 @@ package main
 import (
 	"crypto/sha1"
 	"fmt"
+	"io/ioutil"
 	"os"
 	"os/exec"
 	"os/signal"
+	"path/filepath"
 	"regexp"
+	"sort"
 	"syscall"
+	"time"
 
 	"github.com/bwmarrin/discordgo"
 )
 
-var DiscordToken = mustGetEnvString("DISCORD_TOKEN")
-var PreviewDir = mustGetEnvString("PREVIEW_DIR")
-var PreviewBaseUrl = mustGetEnvString("PREVIEW_BASE_URL")
+var discordToken = mustGetEnvString("DISCORD_TOKEN")
+var previewDir = mustGetEnvString("PREVIEW_DIR")
+var previewBaseUrl = mustGetEnvString("PREVIEW_BASE_URL")
 
 // TODO: Improve this to include short links
-var PreviewMatch = regexp.MustCompile(`\S+(?:tiktok\.com|instagram\.com|twitter\.com|reddit\.com)\S+`)
+var previewMatch = regexp.MustCompile(`\S+(?:tiktok\.com|instagram\.com|twitter\.com|t\.co|reddit\.com|clips\.twitch\.tv)\S+`)
+var ytdlpPath = mustLookPath("yt-dlp")
 
-var BotId string
-
-var SupressEmbeds = &struct {
-	Flags int `json:"flags"`
-}{
-	Flags: 1 << 2,
-}
+var botID string
 
 func main() {
-	os.MkdirAll(PreviewDir, os.ModePerm)
+	// Ensure preview dir exists
+	os.MkdirAll(previewDir, os.ModePerm)
+
 	// Start cleaning task
 	go func() {
 		for range time.Tick(1 * time.Hour) {
@@ -38,7 +39,8 @@ func main() {
 		}
 	}()
 
-	dg, _ := discordgo.New("Bot " + DiscordToken)
+	// Start discord bot
+	dg, _ := discordgo.New("Bot " + discordToken)
 
 	dg.Identify.Intents = discordgo.IntentsGuildMessages
 	dg.Identify.LargeThreshold = 50
@@ -52,7 +54,7 @@ func main() {
 
 	err := dg.Open()
 	if err != nil {
-		fmt.Printf("err starting discordgo: %v\n", err)
+		fmt.Println("err starting discordgo:", err)
 		return
 	}
 
@@ -65,34 +67,32 @@ func main() {
 }
 
 func ready(s *discordgo.Session, m *discordgo.Ready) {
-	BotId = m.User.ID
+	botID = m.User.ID
 }
 
 func messageCreate(s *discordgo.Session, m *discordgo.MessageCreate) {
-	if m.Author.ID == BotId {
+	if m.Author.ID == botID {
 		return
 	}
 
-	link := PreviewMatch.FindString(m.Content)
+	link := previewMatch.FindString(m.Content)
 	if link == "" {
 		return
 	}
 
 	// TODO: Support multiple links?
-	// TODO: Process messages sync then handle links async
+	fmt.Println(link)
 
 	output := preview(link)
 	if output == "" {
 		return
 	}
 
-	if _, err := s.ChannelMessageSend(m.ChannelID, PreviewBaseUrl+output); err != nil {
-		fmt.Printf("err sending message: %v\n", err)
+	if _, err := s.ChannelMessageSend(m.ChannelID, previewBaseUrl+output); err != nil {
+		fmt.Println("err sending message:", err)
 	}
 
-	_, _ = s.RequestWithBucketID("PATCH", discordgo.EndpointChannelMessage(m.ChannelID, m.ID), SupressEmbeds, discordgo.EndpointChannelMessage(m.ChannelID, ""))
-
-	// TODO: Clean output dir
+	_, _ = s.RequestWithBucketID("PATCH", discordgo.EndpointChannelMessage(m.ChannelID, m.ID), map[string]int{"flags": 4}, discordgo.EndpointChannelMessage(m.ChannelID, ""))
 }
 
 func preview(url string) (path string) {
@@ -101,14 +101,16 @@ func preview(url string) (path string) {
 	outputFile := hashUrl + ".mp4"
 
 	cmd := exec.Command(
-		"yt-dlp",
+		ytdlpPath,
 		"--downloader", "ffmpeg", // Ffmpeg lets us limit video duration vs native downloader
 		"--downloader-args", "ffmpeg:-to 60 -loglevel warning", // Limit to 60s
 		"-S", "+vcodec:avc", // Prefer H264
 		// Assume that the places we're downloading from already optimize for the web (faststart + H264)
-		"--no-playlist",
+		"--no-mtime", // Don't make output mtime the date of the video
+		"--no-part", // Seems like yt-dlp downloads videos as .part then renames. Don't think it's necessary in our case.
+		"--no-playlist", // Don't download playlists, only single videos.
 		"-o", outputFile,
-		"-P", PreviewDir,
+		"-P", previewDir,
 		url,
 	)
 
@@ -163,8 +165,18 @@ func clean(dir string, maxSizeGigabytes int) error {
 func mustGetEnvString(key string) (value string) {
 	value, ok := os.LookupEnv(key)
 	if !ok {
-		panic("missing env var " + key)
+		panic("missing env var: " + key)
 	}
 
 	return value
 }
+
+func mustLookPath(file string) (path string) {
+	path, err := exec.LookPath(file)
+	if err != nil {
+		panic("missing in path: " + file)
+	}
+
+	return path
+}
+
