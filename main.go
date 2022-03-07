@@ -104,11 +104,12 @@ func preview(url string) (path string) {
 		ytdlpPath,
 		"--downloader", "ffmpeg", // Ffmpeg lets us limit video duration vs native downloader
 		"--downloader-args", "ffmpeg:-to 60 -loglevel warning", // Limit to 60s
-		"-S", "+vcodec:avc", // Prefer H264
+		"-S", "ext,+vcodec:avc", // Prefer mp4, H264
 		// Assume that the places we're downloading from already optimize for the web (faststart + H264)
 		"--no-mtime", // Don't make output mtime the date of the video
 		"--no-part", // Seems like yt-dlp downloads videos as .part then renames. Don't think it's necessary in our case.
 		"--no-playlist", // Don't download playlists, only single videos.
+		"--playlist-items", "1",
 		"--cookies", "./cookies.txt",
 		"-o", outputFile,
 		"-P", previewDir,
@@ -180,4 +181,3 @@ func mustLookPath(file string) (path string) {
 
 	return path
 }
-
