@@ -1,13 +1,8 @@
 # syntax=docker/dockerfile:1
 
-FROM golang:alpine
+FROM golang:alpine as builder
 
 WORKDIR /app
-
-RUN apk add ffmpeg python3 curl
-
-RUN curl -L https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp -o /usr/local/bin/yt-dlp \
-    && chmod a+rx /usr/local/bin/yt-dlp
 
 COPY go.mod .
 COPY go.sum .
@@ -16,5 +11,13 @@ RUN go mod download
 COPY *.go ./
 
 RUN go build -o main
+
+FROM alpine:edge
+
+RUN apk --no-cache add yt-dlp ffmpeg python3
+
+WORKDIR /app
+
+COPY --from=builder /app /app
 
 CMD ["./main"]
