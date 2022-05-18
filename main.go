@@ -21,7 +21,7 @@ var previewDir = mustGetEnvString("PREVIEW_DIR")
 var previewBaseUrl = mustGetEnvString("PREVIEW_BASE_URL")
 
 // TODO: Improve this to include short links
-var previewMatch = regexp.MustCompile(`\S+(?:tiktok\.com|instagram\.com|twitter\.com|://t\.co|reddit\.com|clips\.twitch\.tv)\S+`)
+var previewMatch = regexp.MustCompile(`\S+(?:tiktok\.com|instagram\.com|twitter\.com|://t\.co|reddit\.com|redd\.it|clips\.twitch\.tv)\S+`)
 var ytdlpPath = mustLookPath("yt-dlp")
 
 var botID string
