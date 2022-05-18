@@ -16,7 +16,7 @@ FROM alpine:edge
 
 ARG CACHEBUST=1
 
-RUN apk --no-cache add  -dlp ffmpeg python3
+RUN apk --no-cache add yt-dlp ffmpeg python3
 
 WORKDIR /app
 
