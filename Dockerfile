@@ -14,7 +14,9 @@ RUN go build -o main
 
 FROM alpine:edge
 
-RUN apk --no-cache add yt-dlp ffmpeg python3
+ARG CACHEBUST=1
+
+RUN apk --no-cache add  -dlp ffmpeg python3
 
 WORKDIR /app
 
