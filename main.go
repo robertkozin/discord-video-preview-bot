@@ -26,6 +26,9 @@ var ytdlpPath = mustLookPath("yt-dlp")
 
 var botID string
 
+// make-shift hashset for saving preview urls
+var cache = map[string]bool{}
+
 func main() {
 	// Ensure preview dir exists
 	os.MkdirAll(previewDir, os.ModePerm)
@@ -90,6 +93,7 @@ func messageCreate(s *discordgo.Session, m *discordgo.MessageCreate) {
 
 	if _, err := s.ChannelMessageSend(m.ChannelID, previewBaseUrl+output); err != nil {
 		fmt.Println("err sending message:", err)
+		return
 	}
 
 	_, _ = s.RequestWithBucketID("PATCH", discordgo.EndpointChannelMessage(m.ChannelID, m.ID), map[string]int{"flags": 4}, discordgo.EndpointChannelMessage(m.ChannelID, ""))
@@ -97,8 +101,12 @@ func messageCreate(s *discordgo.Session, m *discordgo.MessageCreate) {
 
 func preview(url string) (path string) {
 	hashUrl := fmt.Sprintf("%x", sha1.Sum([]byte(url)))[:7]
-
 	outputFile := hashUrl + ".mp4"
+
+	// if a preview was aldready generated, return it
+	if _, ok := cache[outputFile]; ok {
+		return outputFile
+	}
 
 	cmd := exec.Command(
 		ytdlpPath,
@@ -106,8 +114,8 @@ func preview(url string) (path string) {
 		"--downloader-args", "ffmpeg:-to 60 -loglevel warning", // Limit to 60s
 		"-S", "ext,+vcodec:avc", // Prefer mp4, H264
 		// Assume that the places we're downloading from already optimize for the web (faststart + H264)
-		"--no-mtime", // Don't make output mtime the date of the video
-		"--no-part", // Seems like yt-dlp downloads videos as .part then renames. Don't think it's necessary in our case.
+		"--no-mtime",    // Don't make output mtime the date of the video
+		"--no-part",     // Seems like yt-dlp downloads videos as .part then renames. Don't think it's necessary in our case.
 		"--no-playlist", // Don't download playlists, only single videos.
 		"--playlist-items", "1",
 		"--cookies", "./cookies.txt",
@@ -122,6 +130,9 @@ func preview(url string) (path string) {
 	if err := cmd.Run(); err != nil {
 		return ""
 	}
+
+	// add filename to cache
+	cache[outputFile] = true
 
 	return outputFile
 }
@@ -155,7 +166,10 @@ func clean(dir string, maxSizeGigabytes int) error {
 	for _, file := range files {
 		runningDirSize += file.Size()
 		if runningDirSize > targetDirSize {
-			if err = os.Remove(filepath.Join(dir, file.Name())); err != nil {
+			fn := file.Name()
+			// delete preview from cache
+			delete(cache, fn)
+			if err = os.Remove(filepath.Join(dir, fn)); err != nil {
 				return err
 			}
 		}
