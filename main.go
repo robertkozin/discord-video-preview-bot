@@ -206,7 +206,6 @@ func clean(dir string, maxSizeGigabytes int) error {
 	}
 
 	return nil
-
 }
 
 func mustGetEnvString(key string) (value string) {
