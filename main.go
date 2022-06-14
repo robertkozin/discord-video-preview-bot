@@ -27,7 +27,8 @@ var ytdlpPath = mustLookPath("yt-dlp")
 var botID string
 
 // make-shift hashset for saving preview urls
-var cache = map[string]bool{}
+var cache = make(map[string]struct{})
+var history = make(map[string]string)
 
 func main() {
 	// Ensure preview dir exists
@@ -36,6 +37,7 @@ func main() {
 	// Start cleaning task
 	go func() {
 		for range time.Tick(1 * time.Hour) {
+			cleanHistory()
 			if err := clean(previewDir, 10); err != nil {
 				fmt.Println("err cleaning:", err)
 			}
@@ -54,6 +56,7 @@ func main() {
 
 	dg.AddHandler(ready)
 	dg.AddHandler(messageCreate)
+	dg.AddHandler(messageDelete)
 
 	err := dg.Open()
 	if err != nil {
@@ -91,12 +94,28 @@ func messageCreate(s *discordgo.Session, m *discordgo.MessageCreate) {
 		return
 	}
 
-	if _, err := s.ChannelMessageSend(m.ChannelID, previewBaseUrl+output); err != nil {
+	data := discordgo.MessageSend{
+		Content:         previewBaseUrl + output,
+		Reference:       m.Reference(),
+		AllowedMentions: &discordgo.MessageAllowedMentions{},
+	}
+	newMsg, err := s.ChannelMessageSendComplex(m.ChannelID, &data)
+	if err != nil {
 		fmt.Println("err sending message:", err)
 		return
 	}
 
+	// add message to history
+	history[m.ID] = newMsg.ID
+
 	_, _ = s.RequestWithBucketID("PATCH", discordgo.EndpointChannelMessage(m.ChannelID, m.ID), map[string]int{"flags": 4}, discordgo.EndpointChannelMessage(m.ChannelID, ""))
+}
+
+func messageDelete(s *discordgo.Session, m *discordgo.MessageDelete) {
+	if id, ok := history[m.ID]; ok {
+		s.ChannelMessageDelete(m.ChannelID, id)
+		delete(history, m.ID)
+	}
 }
 
 func preview(url string) (path string) {
@@ -132,9 +151,20 @@ func preview(url string) (path string) {
 	}
 
 	// add filename to cache
-	cache[outputFile] = true
+	cache[outputFile] = struct{}{}
 
 	return outputFile
+}
+
+// loop through all ids in the sent history and delete any id's older than a day
+func cleanHistory() {
+	yesterday := time.Now().Add(-24 * time.Hour)
+	for id := range history {
+		ts, err := discordgo.SnowflakeTimestamp(id)
+		if err != nil || ts.Before(yesterday) {
+			delete(history, id)
+		}
+	}
 }
 
 // If size of directory is greater than max then remove ~20% of the oldest files.
