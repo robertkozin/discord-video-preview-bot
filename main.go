@@ -31,7 +31,7 @@ var previewBaseUrl = mustGetEnvString("PREVIEW_BASE_URL")
 var previewMatch = regexp.MustCompile(`\S+(?:tiktok\.com|instagram\.com|twitter\.com|://t\.co|reddit\.com|redd\.it|clips\.twitch\.tv|youtube.com/shorts/)\S+`)
 var spotifyMatch = regexp.MustCompile(`\S+open\.spotify\.com\/track\/([a-zA-Z0-9]+)\S+`)
 
-var ytdlpPath = "" // mustLookPath("yt-dlp")
+var ytdlpPath = mustLookPath("yt-dlp")
 var ffmpegPath = mustLookPath("ffmpeg")
 
 var botID string
@@ -308,6 +308,7 @@ func spotifyPreview(trackId string) (path string) {
 	var args []string
 	if ext == "mp4" {
 		args = []string{
+			"-y", // overwrite output file
 			"-stream_loop", "-1",
 			"-i", canvas_path,
 			"-i", audiopreview_path,
@@ -321,6 +322,7 @@ func spotifyPreview(trackId string) (path string) {
 	} else {
 		// for png, jpg exts
 		args = []string{
+			"-y", // overwrite output file
 			"-loop", "1",
 			"-i", canvas_path,
 			"-i", audiopreview_path,
