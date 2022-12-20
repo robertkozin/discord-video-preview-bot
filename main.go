@@ -31,7 +31,7 @@ var previewBaseUrl = mustGetEnvString("PREVIEW_BASE_URL")
 var previewMatch = regexp.MustCompile(`\S+(?:tiktok\.com|instagram\.com|twitter\.com|://t\.co|reddit\.com|redd\.it|clips\.twitch\.tv|youtube.com/shorts/)\S+`)
 var spotifyMatch = regexp.MustCompile(`\S+open\.spotify\.com\/track\/([a-zA-Z0-9]+)\S+`)
 
-var ytdlpPath = "s"
+var ytdlpPath = "" // mustLookPath("yt-dlp")
 var ffmpegPath = mustLookPath("ffmpeg")
 
 var botID string
@@ -100,10 +100,16 @@ func messageCreate(s *discordgo.Session, m *discordgo.MessageCreate) {
 	if link := previewMatch.FindString(m.Content); link != "" {
 		// TODO: Support multiple links?
 		fmt.Println(link)
+
+		s.ChannelTyping(m.ChannelID)
+
 		output = preview(link)
 	} else if spotifyMatch.MatchString(m.Content) {
 		trackId := spotifyMatch.FindStringSubmatch(m.Content)[1]
 		fmt.Println("spotify track id:", trackId)
+
+		s.ChannelTyping(m.ChannelID)
+
 		output = spotifyPreview(trackId)
 	} else {
 		return
@@ -298,10 +304,10 @@ func spotifyPreview(trackId string) (path string) {
 	}
 
 	outputPath := filepath.Join(previewDir, outputFile)
-	var cmd *exec.Cmd
+
+	var args []string
 	if ext == "mp4" {
-		cmd = exec.Command(
-			ffmpegPath,
+		args = []string{
 			"-stream_loop", "-1",
 			"-i", canvas_path,
 			"-i", audiopreview_path,
@@ -309,27 +315,25 @@ func spotifyPreview(trackId string) (path string) {
 			"-map", "1:a:0",
 			"-t", "30",
 			"-shortest",
-			"-c", "copy",
+			"-c:v", "copy",
 			outputPath,
-		)
-
+		}
 	} else {
-		// use still image as canvas
-		cmd = exec.Command(
-			ffmpegPath,
+		// for png, jpg exts
+		args = []string{
 			"-loop", "1",
 			"-i", canvas_path,
 			"-i", audiopreview_path,
 			"-c:v", "libx264",
-			"-tune", "stillimage",
-			"-c:a", "copy",
+			"-tune:v", "stillimage",
 			"-t", "30",
 			"-shortest",
 			"-filter:v", "fps=1",
 			outputPath,
-		)
+		}
 	}
 
+	cmd := exec.Command(ffmpegPath, args...)
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 
