@@ -3,26 +3,36 @@ package main
 import (
 	"crypto/sha1"
 	"fmt"
+	"io"
 	"io/ioutil"
+	"net/http"
 	"os"
 	"os/exec"
 	"os/signal"
 	"path/filepath"
 	"regexp"
 	"sort"
+	"strings"
 	"syscall"
 	"time"
 
 	"github.com/bwmarrin/discordgo"
+	"github.com/nathanielfernandes/cnvs/canvas"
+	spreview "github.com/nathanielfernandes/cnvs/preview"
+	"github.com/nathanielfernandes/cnvs/token"
 )
 
 var discordToken = mustGetEnvString("DISCORD_TOKEN")
 var previewDir = mustGetEnvString("PREVIEW_DIR")
+var tempDir = getEnvWithFallback("TEMP_DIR", "./tmp")
 var previewBaseUrl = mustGetEnvString("PREVIEW_BASE_URL")
 
 // TODO: Improve this to include short links
 var previewMatch = regexp.MustCompile(`\S+(?:tiktok\.com|instagram\.com|twitter\.com|://t\.co|reddit\.com|redd\.it|clips\.twitch\.tv|youtube.com/shorts/)\S+`)
+var spotifyMatch = regexp.MustCompile(`\S+open\.spotify\.com\/track\/([a-zA-Z0-9]+)\S+`)
+
 var ytdlpPath = mustLookPath("yt-dlp")
+var ffmpegPath = mustLookPath("ffmpeg")
 
 var botID string
 
@@ -33,6 +43,7 @@ var history = make(map[string]string)
 func main() {
 	// Ensure preview dir exists
 	os.MkdirAll(previewDir, os.ModePerm)
+	os.MkdirAll(tempDir, os.ModePerm)
 
 	// Start cleaning task
 	go func() {
@@ -44,12 +55,16 @@ func main() {
 		}
 	}()
 
+	// start spotify runners
+	token.StartAccessTokenReferesher()
+	canvas.StartCanvasRunner()
+	spreview.StartPreviewRunner()
+
 	// Start discord bot
 	dg, _ := discordgo.New("Bot " + discordToken)
 
 	dg.Identify.Intents = discordgo.IntentsGuildMessages
 	dg.Identify.LargeThreshold = 50
-	dg.Identify.GuildSubscriptions = false
 
 	dg.SyncEvents = false
 	dg.StateEnabled = false
@@ -81,15 +96,25 @@ func messageCreate(s *discordgo.Session, m *discordgo.MessageCreate) {
 		return
 	}
 
-	link := previewMatch.FindString(m.Content)
-	if link == "" {
+	output := ""
+	if link := previewMatch.FindString(m.Content); link != "" {
+		// TODO: Support multiple links?
+		fmt.Println(link)
+
+		s.ChannelTyping(m.ChannelID)
+
+		output = preview(link)
+	} else if spotifyMatch.MatchString(m.Content) {
+		trackId := spotifyMatch.FindStringSubmatch(m.Content)[1]
+		fmt.Println("spotify track id:", trackId)
+
+		s.ChannelTyping(m.ChannelID)
+
+		output = spotifyPreview(trackId)
+	} else {
 		return
 	}
 
-	// TODO: Support multiple links?
-	fmt.Println(link)
-
-	output := preview(link)
 	if output == "" {
 		return
 	}
@@ -217,6 +242,15 @@ func mustGetEnvString(key string) (value string) {
 	return value
 }
 
+func getEnvWithFallback(key string, fallback string) (value string) {
+	value, ok := os.LookupEnv(key)
+	if !ok {
+		return fallback
+	}
+
+	return value
+}
+
 func mustLookPath(file string) (path string) {
 	path, err := exec.LookPath(file)
 	if err != nil {
@@ -224,4 +258,130 @@ func mustLookPath(file string) (path string) {
 	}
 
 	return path
+}
+
+func spotifyPreview(trackId string) (path string) {
+	outputFile := trackId + ".mp4"
+	// if a preview was aldready generated, return it
+	if _, ok := cache[outputFile]; ok {
+		return previewBaseUrl + outputFile
+	}
+
+	c, err := canvas.GetCanvas("spotify:track:" + trackId)
+	if err != nil {
+		fmt.Println("err getting canvas:", trackId)
+		return
+	}
+	p, err := spreview.GetPreview(trackId)
+	if (err != nil || p == spreview.PreviewResponse{}) {
+		fmt.Println("err getting preview:", trackId)
+		return
+	}
+
+	audiopreview_url := p.AudioURL
+	canvas_url := p.CoverArtURL
+	if c != nil {
+		canvas_url = c.CanvasUrl
+	}
+
+	ext := "png"
+	if strings.Contains(canvas_url, ".mp4") {
+		ext = "mp4"
+	} else if strings.Contains(canvas_url, ".jpg") {
+		ext = "jpg"
+	}
+
+	canvas_path := filepath.Join(tempDir, fmt.Sprintf("%s-raw.%s", trackId, ext))
+	defer os.Remove(canvas_path)
+	if !download(canvas_url, canvas_path) {
+		return
+	}
+
+	audiopreview_path := filepath.Join(tempDir, fmt.Sprintf("%s-raw.mp3", trackId))
+	defer os.Remove(audiopreview_path)
+	if !download(audiopreview_url, audiopreview_path) {
+		return
+	}
+
+	outputPath := filepath.Join(previewDir, outputFile)
+
+	var args []string
+	if ext == "mp4" {
+		args = []string{
+			"-y", // overwrite output file
+			"-stream_loop", "-1",
+			"-i", canvas_path,
+			"-i", audiopreview_path,
+			"-map", "0:v:0",
+			"-map", "1:a:0",
+			"-t", "30",
+			"-shortest",
+			"-c:v", "copy",
+			outputPath,
+		}
+	} else {
+		// for png, jpg exts
+		args = []string{
+			"-y", // overwrite output file
+			"-loop", "1",
+			"-i", canvas_path,
+			"-i", audiopreview_path,
+			"-c:v", "libx264",
+			"-tune:v", "stillimage",
+			"-t", "30",
+			"-shortest",
+			"-filter:v", "fps=1",
+			outputPath,
+		}
+	}
+
+	cmd := exec.Command(ffmpegPath, args...)
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+
+	if err := cmd.Run(); err != nil {
+		return
+	}
+
+	cache[outputFile] = struct{}{}
+
+	return outputFile
+}
+
+func download(url string, path string) bool {
+	// Create the file
+	out, err := os.Create(path)
+	if err != nil {
+		return false
+	}
+
+	defer out.Close()
+
+	// Get the data
+	req, err := http.NewRequest("GET", url, nil)
+	if err != nil {
+		return false
+	}
+	req.Header.Set("User-Agent", "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.114 Safari/537.36")
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return false
+	}
+
+	defer resp.Body.Close()
+
+	// Check server response
+	if resp.StatusCode != http.StatusOK {
+		return false
+	}
+
+	// Writer the body to file
+	_, err = io.Copy(out, resp.Body)
+	if err != nil {
+		return false
+	}
+
+	fmt.Println("file downloaded:", path)
+	return true
 }
