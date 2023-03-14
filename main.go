@@ -96,6 +96,10 @@ func messageCreate(s *discordgo.Session, m *discordgo.MessageCreate) {
 		return
 	}
 
+	if strings.Contains(m.Content, ".gif") {
+		return
+	}
+
 	output := ""
 	if link := previewMatch.FindString(m.Content); link != "" {
 		// TODO: Support multiple links?
@@ -155,7 +159,7 @@ func preview(url string) (path string) {
 	cmd := exec.Command(
 		ytdlpPath,
 		"--downloader", "ffmpeg", // Ffmpeg lets us limit video duration vs native downloader
-		"--downloader-args", "ffmpeg:-to 60 -loglevel warning", // Limit to 60s
+		"--downloader-args", "ffmpeg:-to 300 -loglevel warning", // Limit to 60s
 		"-S", "ext,+vcodec:avc", // Prefer mp4, H264
 		// Assume that the places we're downloading from already optimize for the web (faststart + H264)
 		"--no-mtime",    // Don't make output mtime the date of the video
