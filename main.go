@@ -42,6 +42,7 @@ var previewGenCode = func() string {
 
 // TODO: Improve this to include short links
 var previewMatch = regexp.MustCompile(`\S+(?:tiktok\.com|instagram\.com|twitter\.com|://t\.co|reddit\.com|redd\.it|clips\.twitch\.tv|youtube.com/shorts/)\S+`)
+
 var spotifyMatch = regexp.MustCompile(`\S+open\.spotify\.com\/track\/([a-zA-Z0-9]+)\S+`)
 
 var ytdlpPath = mustLookPath("yt-dlp")
@@ -57,6 +58,7 @@ func main() {
 	// Ensure preview dir exists
 	os.MkdirAll(previewDir, os.ModePerm)
 	os.MkdirAll(tempDir, os.ModePerm)
+	os.MkdirAll(tempDir, os.ModePerm)
 
 	// Start cleaning task
 	go func() {
@@ -67,6 +69,11 @@ func main() {
 			}
 		}
 	}()
+
+	// start spotify runners
+	token.StartAccessTokenReferesher()
+	canvas.StartCanvasRunner()
+	spreview.StartPreviewRunner()
 
 	// start spotify runners
 	token.StartAccessTokenReferesher()
@@ -106,6 +113,10 @@ func ready(s *discordgo.Session, m *discordgo.Ready) {
 
 func messageCreate(s *discordgo.Session, m *discordgo.MessageCreate) {
 	if m.Author.ID == botID {
+		return
+	}
+
+	if strings.Contains(m.Content, ".gif") {
 		return
 	}
 
@@ -168,7 +179,7 @@ func preview(url string) (path string) {
 	cmd := exec.Command(
 		ytdlpPath,
 		"--downloader", "ffmpeg", // Ffmpeg lets us limit video duration vs native downloader
-		"--downloader-args", "ffmpeg:-to 60 -loglevel warning", // Limit to 60s
+		"--downloader-args", "ffmpeg:-to 300 -loglevel warning", // Limit to 60s
 		"-S", "ext,+vcodec:avc", // Prefer mp4, H264
 		// Assume that the places we're downloading from already optimize for the web (faststart + H264)
 		"--no-mtime",    // Don't make output mtime the date of the video
