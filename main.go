@@ -1,7 +1,9 @@
 package main
 
 import (
+	"bytes"
 	"crypto/sha1"
+	"encoding/json"
 	"fmt"
 	"io"
 	"io/ioutil"
@@ -26,6 +28,17 @@ var discordToken = mustGetEnvString("DISCORD_TOKEN")
 var previewDir = mustGetEnvString("PREVIEW_DIR")
 var tempDir = getEnvWithFallback("TEMP_DIR", "./tmp")
 var previewBaseUrl = mustGetEnvString("PREVIEW_BASE_URL")
+
+// canvas api (quilt)
+var canvasBaseUrl = mustGetEnvString("CANVAS_BASE_URL")
+var canvasSecret = mustGetEnvString("CANVAS_SECRET")
+var previewGenCode = func() string {
+	dat, err := os.ReadFile("./preview.ql")
+	if err != nil {
+		panic(err)
+	}
+	return string(dat)
+}()
 
 // TODO: Improve this to include short links
 var previewMatch = regexp.MustCompile(`\S+(?:tiktok\.com|instagram\.com|twitter\.com|://t\.co|reddit\.com|redd\.it|clips\.twitch\.tv|youtube.com/shorts/)\S+`)
@@ -264,7 +277,7 @@ func spotifyPreview(trackId string) (path string) {
 	outputFile := trackId + ".mp4"
 	// if a preview was aldready generated, return it
 	if _, ok := cache[outputFile]; ok {
-		return previewBaseUrl + outputFile
+		return outputFile
 	}
 
 	c, err := canvas.GetCanvas("spotify:track:" + trackId)
@@ -280,8 +293,10 @@ func spotifyPreview(trackId string) (path string) {
 
 	audiopreview_url := p.AudioURL
 	canvas_url := p.CoverArtURL
+	gen := true
 	if c != nil {
 		canvas_url = c.CanvasUrl
+		gen = false
 	}
 
 	ext := "png"
@@ -293,13 +308,23 @@ func spotifyPreview(trackId string) (path string) {
 
 	canvas_path := filepath.Join(tempDir, fmt.Sprintf("%s-raw.%s", trackId, ext))
 	defer os.Remove(canvas_path)
-	if !download(canvas_url, canvas_path) {
-		return
+
+	if gen {
+		if !downloadGenImage(p.CoverArtURL, p.TrackName, p.ArtistName, canvas_path) {
+			fmt.Println("err downloading gen canvas:", trackId)
+			return
+		}
+	} else {
+		if !download(canvas_url, canvas_path) {
+			fmt.Println("err downloading canvas:", trackId)
+			return
+		}
 	}
 
 	audiopreview_path := filepath.Join(tempDir, fmt.Sprintf("%s-raw.mp3", trackId))
 	defer os.Remove(audiopreview_path)
 	if !download(audiopreview_url, audiopreview_path) {
+		fmt.Println("err downloading audiopreview:", trackId)
 		return
 	}
 
@@ -384,4 +409,95 @@ func download(url string, path string) bool {
 
 	fmt.Println("file downloaded:", path)
 	return true
+}
+
+func downloadGenImage(album_art, track_name, artist_name, path string) bool {
+	payload := RunPayload{
+		Size: []int{512, 612},
+		Files: []File{
+			{
+				Name: "preview.ql",
+				Code: previewGenCode,
+			},
+		},
+		Assets: []interface{}{
+			ImageAsset{
+				Name: "art",
+				Url:  album_art,
+			},
+			LiteralAsset{
+				Name:    "track_name",
+				Literal: fmt.Sprintf("\"%s\"", track_name),
+			},
+			LiteralAsset{
+				Name:    "artist_name",
+				Literal: fmt.Sprintf("\"%s\"", artist_name),
+			},
+		},
+	}
+
+	// Create the file
+	out, err := os.Create(path)
+	if err != nil {
+		return false
+	}
+
+	defer out.Close()
+
+	jsonBytes, err := json.Marshal(payload)
+	if err != nil {
+		return false
+	}
+
+	body := bytes.NewBuffer(jsonBytes)
+
+	req, err := http.NewRequest("POST", canvasBaseUrl+"/run/"+canvasSecret, body)
+	req.Header.Set("Content-Type", "application/json; charset=UTF-8")
+
+	if err != nil {
+		return false
+	}
+
+	resp, err := http.DefaultClient.Do(req)
+
+	if err != nil {
+		return false
+	}
+
+	defer resp.Body.Close()
+
+	// Check server response
+	if resp.StatusCode != http.StatusOK {
+		return false
+	}
+
+	// Writer the body to file
+	_, err = io.Copy(out, resp.Body)
+	if err != nil {
+		return false
+	}
+
+	fmt.Println("file downloaded:", path)
+	return true
+}
+
+type RunPayload struct {
+	Size   []int         `json:"size"`
+	Files  []File        `json:"files"`
+	Assets []interface{} `json:"assets"`
+}
+
+type File struct {
+	Name string `json:"name"`
+	Code string `json:"code"`
+}
+
+type ImageAsset struct {
+	Name string `json:"name"`
+	Url  string `json:"url"`
+}
+
+type LiteralAsset struct {
+	Name    string `json:"name"`
+	Literal string `json:"literal"`
 }
