@@ -42,7 +42,7 @@ var previewMatch = regexp.MustCompile(`\S+(?:tiktok\.com|instagram\.com|twitter\
 
 var spotifyMatch = regexp.MustCompile(`\S+open\.spotify\.com\/track\/([a-zA-Z0-9]+)\S+`)
 
-var ytdlpPath = mustLookPath("youtube-dl")
+var ytdlpPath = mustLookPath("yt-dlp")
 var ffmpegPath = mustLookPath("ffmpeg")
 
 var botID string
