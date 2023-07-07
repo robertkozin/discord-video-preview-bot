@@ -18,11 +18,11 @@ let colors = @GetPalette(art)
 
 @SetFont("ggsans-bold")
 
-let offset = size + d*2
+let offset = size + d*1.7
 @DrawTextBox(track_name, w / 2, offset, 0.5, 0.5, w-d, d)
 
 @SetFont("discord")
-@DrawTextBox(artist_name, w / 2, offset + d, 0.5, 0.5, w-d, 35)
+@DrawTextBox(artist_name, w / 2, offset + d - 12, 0.5, 0.5, w-d, 30)
 
 @SetColor(#0000002d)
 @SetStrokeWidth(3)
@@ -40,6 +40,5 @@ for c in colors {
     @DrawRectangle(x, y, s, s)
     @SetColor(c)
     @Fill()
-
     x = x + s + spacing
 }

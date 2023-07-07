@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"crypto/sha1"
+	_ "embed"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -32,20 +33,16 @@ var previewBaseUrl = mustGetEnvString("PREVIEW_BASE_URL")
 // canvas api (quilt)
 var canvasBaseUrl = mustGetEnvString("CANVAS_BASE_URL")
 var canvasSecret = mustGetEnvString("CANVAS_SECRET")
-var previewGenCode = func() string {
-	dat, err := os.ReadFile("./preview.ql")
-	if err != nil {
-		panic(err)
-	}
-	return string(dat)
-}()
+
+//go:embed preview.ql
+var previewGenCode string
 
 // TODO: Improve this to include short links
 var previewMatch = regexp.MustCompile(`\S+(?:tiktok\.com|instagram\.com|twitter\.com|://t\.co|reddit\.com|redd\.it|clips\.twitch\.tv|youtube.com/shorts/)\S+`)
 
 var spotifyMatch = regexp.MustCompile(`\S+open\.spotify\.com\/track\/([a-zA-Z0-9]+)\S+`)
 
-var ytdlpPath = mustLookPath("yt-dlp")
+var ytdlpPath = mustLookPath("youtube-dl")
 var ffmpegPath = mustLookPath("ffmpeg")
 
 var botID string
@@ -58,7 +55,6 @@ func main() {
 	// Ensure preview dir exists
 	os.MkdirAll(previewDir, os.ModePerm)
 	os.MkdirAll(tempDir, os.ModePerm)
-	os.MkdirAll(tempDir, os.ModePerm)
 
 	// Start cleaning task
 	go func() {
@@ -69,11 +65,6 @@ func main() {
 			}
 		}
 	}()
-
-	// start spotify runners
-	token.StartAccessTokenReferesher()
-	canvas.StartCanvasRunner()
-	spreview.StartPreviewRunner()
 
 	// start spotify runners
 	token.StartAccessTokenReferesher()
@@ -424,7 +415,7 @@ func download(url string, path string) bool {
 
 func downloadGenImage(album_art, track_name, artist_name, path string) bool {
 	payload := RunPayload{
-		Size: []int{512, 612},
+		Size: []int{512, 576},
 		Files: []File{
 			{
 				Name: "preview.ql",
