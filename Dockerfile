@@ -9,6 +9,7 @@ COPY go.sum .
 RUN go mod download
 
 COPY *.go ./
+COPY *.ql ./
 
 RUN go build -o main
 
