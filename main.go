@@ -26,7 +26,7 @@ var previewDir = mustGetEnvString("PREVIEW_DIR")
 var previewBaseUrl = mustGetEnvString("PREVIEW_BASE_URL")
 
 // TODO: Improve this to include short links
-var previewMatch = regexp.MustCompile(`https://(?:tiktok\.com|instagram\.com|twitter\.com|t\.co|reddit\.com|redd\.it|clips\.twitch\.tv|youtube.com/shorts/|x.com)\S+`)
+var previewMatch = regexp.MustCompile(`\S+(?:tiktok\.com|instagram\.com|twitter\.com|://t\.co|reddit\.com|redd\.it|clips\.twitch\.tv|youtube.com/shorts/|://x.com)\S+`)
 
 var botID string
 
@@ -118,6 +118,8 @@ func messageCreate(s *discordgo.Session, m *discordgo.MessageCreate) {
 	filename := getFilename(link)
 	path := filepath.Join(previewDir, filename)
 	output := previewBaseUrl + filename
+
+	s.ChannelTyping(m.ChannelID)
 
 	err := preview(link, path)
 
