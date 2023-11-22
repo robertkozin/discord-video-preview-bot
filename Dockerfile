@@ -9,15 +9,12 @@ COPY go.sum .
 RUN go mod download
 
 COPY *.go ./
-COPY *.ql ./
 
 RUN go build -o main
 
 FROM alpine:edge
 
-ARG CACHEBUST=8
-
-RUN apk add --no-cache yt-dlp ffmpeg python3
+RUN apk add ffmpeg
 
 WORKDIR /app
 

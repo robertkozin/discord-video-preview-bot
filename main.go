@@ -3,11 +3,11 @@ package main
 import (
 	"bytes"
 	"crypto/sha1"
-	_ "embed"
 	"encoding/json"
 	"fmt"
 	"io"
 	"io/ioutil"
+	"mime"
 	"net/http"
 	"os"
 	"os/exec"
@@ -15,46 +15,48 @@ import (
 	"path/filepath"
 	"regexp"
 	"sort"
-	"strings"
 	"syscall"
 	"time"
 
 	"github.com/bwmarrin/discordgo"
-	"github.com/nathanielfernandes/cnvs/canvas"
-	spreview "github.com/nathanielfernandes/cnvs/preview"
-	"github.com/nathanielfernandes/cnvs/token"
 )
 
 var discordToken = mustGetEnvString("DISCORD_TOKEN")
 var previewDir = mustGetEnvString("PREVIEW_DIR")
-var tempDir = getEnvWithFallback("TEMP_DIR", "./tmp")
 var previewBaseUrl = mustGetEnvString("PREVIEW_BASE_URL")
 
-// canvas api (quilt)
-var canvasBaseUrl = mustGetEnvString("CANVAS_BASE_URL")
-var canvasSecret = mustGetEnvString("CANVAS_SECRET")
-
-//go:embed preview.ql
-var previewGenCode string
-
 // TODO: Improve this to include short links
-var previewMatch = regexp.MustCompile(`\S+(?:tiktok\.com|instagram\.com|twitter\.com|://t\.co|reddit\.com|redd\.it|clips\.twitch\.tv|youtube.com/shorts/)\S+`)
-
-var spotifyMatch = regexp.MustCompile(`\S+open\.spotify\.com\/track\/([a-zA-Z0-9]+)\S+`)
-
-var ytdlpPath = mustLookPath("yt-dlp")
-var ffmpegPath = mustLookPath("ffmpeg")
+var previewMatch = regexp.MustCompile(`https://(?:tiktok\.com|instagram\.com|twitter\.com|t\.co|reddit\.com|redd\.it|clips\.twitch\.tv|youtube.com/shorts/|x.com)\S+`)
 
 var botID string
 
-// make-shift hashset for saving preview urls
-var cache = make(map[string]struct{})
 var history = make(map[string]string)
+
+var cobaltEndpoint = "https://co.wuk.sh/api/json"
+
+type CobaltRequest struct {
+	Url             string `json:"url"`
+	IsNoTTWatermark bool   `json:"isNoTTWatermark"`
+}
+
+type CobaltResponse struct {
+	Status     string         `json:"status"` // error / redirect / stream / success / rate-limit / picker
+	Text       string         `json:"text"`
+	Url        string         `json:"url"`
+	PickerType string         `json:"pickerType"` // various / images
+	Picker     []CobaltPicker `json:"picker"`
+	Audio      string         `json:"audio"`
+}
+
+type CobaltPicker struct {
+	Type  string `json:"type"` // video, used only if pickerTypeis various
+	Url   string `json:"url"`
+	Thumb string `json:"thumb"`
+}
 
 func main() {
 	// Ensure preview dir exists
 	os.MkdirAll(previewDir, os.ModePerm)
-	os.MkdirAll(tempDir, os.ModePerm)
 
 	// Start cleaning task
 	go func() {
@@ -65,11 +67,6 @@ func main() {
 			}
 		}
 	}()
-
-	// start spotify runners
-	token.StartAccessTokenReferesher()
-	canvas.StartCanvasRunner()
-	spreview.StartPreviewRunner()
 
 	// Start discord bot
 	dg, _ := discordgo.New("Bot " + discordToken)
@@ -102,40 +99,36 @@ func ready(s *discordgo.Session, m *discordgo.Ready) {
 	botID = m.User.ID
 }
 
+func getFilename(url string) string {
+	hashUrl := fmt.Sprintf("%x", sha1.Sum([]byte(url)))[:7]
+	outputFile := hashUrl + ".mp4"
+	return outputFile
+}
+
 func messageCreate(s *discordgo.Session, m *discordgo.MessageCreate) {
 	if m.Author.ID == botID {
 		return
 	}
 
-	if strings.Contains(m.Content, ".gif") {
+	link := previewMatch.FindString(m.Content)
+	if link == "" {
 		return
 	}
 
-	output := ""
-	if link := previewMatch.FindString(m.Content); link != "" {
-		// TODO: Support multiple links?
-		fmt.Println(link)
+	filename := getFilename(link)
+	path := filepath.Join(previewDir, filename)
+	output := previewBaseUrl + filename
 
-		s.ChannelTyping(m.ChannelID)
+	err := preview(link, path)
 
-		output = preview(link)
-	} else if spotifyMatch.MatchString(m.Content) {
-		trackId := spotifyMatch.FindStringSubmatch(m.Content)[1]
-		fmt.Println("spotify track id:", trackId)
-
-		s.ChannelTyping(m.ChannelID)
-
-		output = spotifyPreview(trackId)
+	if err != nil {
+		output = err.Error()
 	} else {
-		return
-	}
-
-	if output == "" {
-		return
+		_, _ = s.RequestWithBucketID("PATCH", discordgo.EndpointChannelMessage(m.ChannelID, m.ID), map[string]int{"flags": 4}, discordgo.EndpointChannelMessage(m.ChannelID, ""))
 	}
 
 	data := discordgo.MessageSend{
-		Content:         previewBaseUrl + output,
+		Content:         output,
 		Reference:       m.Reference(),
 		AllowedMentions: &discordgo.MessageAllowedMentions{},
 	}
@@ -147,8 +140,6 @@ func messageCreate(s *discordgo.Session, m *discordgo.MessageCreate) {
 
 	// add message to history
 	history[m.ID] = newMsg.ID
-
-	_, _ = s.RequestWithBucketID("PATCH", discordgo.EndpointChannelMessage(m.ChannelID, m.ID), map[string]int{"flags": 4}, discordgo.EndpointChannelMessage(m.ChannelID, ""))
 }
 
 func messageDelete(s *discordgo.Session, m *discordgo.MessageDelete) {
@@ -158,42 +149,42 @@ func messageDelete(s *discordgo.Session, m *discordgo.MessageDelete) {
 	}
 }
 
-func preview(url string) (path string) {
-	hashUrl := fmt.Sprintf("%x", sha1.Sum([]byte(url)))[:7]
-	outputFile := hashUrl + ".mp4"
-
-	// if a preview was aldready generated, return it
-	if _, ok := cache[outputFile]; ok {
-		return outputFile
+func fileExists(filename string) bool {
+	info, err := os.Stat(filename)
+	if os.IsNotExist(err) {
+		return false
+	}
+	return !info.IsDir()
+}
+func preview(url, filename string) (err error) {
+	if fileExists(filename) {
+		return nil
 	}
 
-	cmd := exec.Command(
-		ytdlpPath,
-		"--downloader", "ffmpeg", // Ffmpeg lets us limit video duration vs native downloader
-		"--downloader-args", "ffmpeg:-to 300 -loglevel warning", // Limit to 60s
-		"-S", "ext,+vcodec:avc", // Prefer mp4, H264
-		// Assume that the places we're downloading from already optimize for the web (faststart + H264)
-		"--no-mtime",    // Don't make output mtime the date of the video
-		"--no-part",     // Seems like yt-dlp downloads videos as .part then renames. Don't think it's necessary in our case.
-		"--no-playlist", // Don't download playlists, only single videos.
-		"--playlist-items", "1",
-		"--cookies", "./cookies.txt",
-		"-o", outputFile,
-		"-P", previewDir,
-		url,
-	)
-
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-
-	if err := cmd.Run(); err != nil {
-		return ""
+	var req = CobaltRequest{
+		Url: url,
+	}
+	var res CobaltResponse
+	if err = PostJSON(cobaltEndpoint, &req, &res); err != nil {
+		return err
 	}
 
-	// add filename to cache
-	cache[outputFile] = struct{}{}
+	if err = handleCobalt(&res, filename); err != nil {
+		return err
+	}
 
-	return outputFile
+	return nil
+}
+
+func handleCobalt(res *CobaltResponse, filename string) error {
+	switch res.Status {
+	case "redirect":
+		return download(res.Url, filename)
+	case "stream":
+		return download(res.Url, filename)
+	default:
+		return fmt.Errorf("status not supported %v", res.Status)
+	}
 }
 
 // loop through all ids in the sent history and delete any id's older than a day
@@ -238,7 +229,7 @@ func clean(dir string, maxSizeGigabytes int) error {
 		if runningDirSize > targetDirSize {
 			fn := file.Name()
 			// delete preview from cache
-			delete(cache, fn)
+			//delete(cache, fn)
 			if err = os.Remove(filepath.Join(dir, fn)); err != nil {
 				return err
 			}
@@ -275,231 +266,69 @@ func mustLookPath(file string) (path string) {
 	return path
 }
 
-func spotifyPreview(trackId string) (path string) {
-	outputFile := trackId + ".mp4"
-	// if a preview was aldready generated, return it
-	if _, ok := cache[outputFile]; ok {
-		return outputFile
-	}
-
-	c, err := canvas.GetCanvas("spotify:track:" + trackId)
+func download(url, path string) error {
+	out, err := os.OpenFile(path, os.O_TRUNC|os.O_WRONLY|os.O_CREATE, os.ModePerm)
 	if err != nil {
-		fmt.Println("err getting canvas:", trackId)
-		return
+		return err
 	}
-	p, err := spreview.GetPreview(trackId)
-	if (err != nil || p == spreview.PreviewResponse{}) {
-		fmt.Println("err getting preview:", trackId)
-		return
-	}
-
-	audiopreview_url := p.AudioURL
-	canvas_url := p.CoverArtURL
-	gen := true
-	if c != nil {
-		canvas_url = c.CanvasUrl
-		gen = false
-	}
-
-	ext := "png"
-	if strings.Contains(canvas_url, ".mp4") {
-		ext = "mp4"
-	} else if strings.Contains(canvas_url, ".jpg") {
-		ext = "jpg"
-	}
-
-	canvas_path := filepath.Join(tempDir, fmt.Sprintf("%s-raw.%s", trackId, ext))
-	defer os.Remove(canvas_path)
-
-	if gen {
-		if !downloadGenImage(p.CoverArtURL, p.TrackName, p.ArtistName, canvas_path) {
-			fmt.Println("err downloading gen canvas:", trackId)
-			return
-		}
-	} else {
-		if !download(canvas_url, canvas_path) {
-			fmt.Println("err downloading canvas:", trackId)
-			return
-		}
-	}
-
-	audiopreview_path := filepath.Join(tempDir, fmt.Sprintf("%s-raw.mp3", trackId))
-	defer os.Remove(audiopreview_path)
-	if !download(audiopreview_url, audiopreview_path) {
-		fmt.Println("err downloading audiopreview:", trackId)
-		return
-	}
-
-	outputPath := filepath.Join(previewDir, outputFile)
-
-	var args []string
-	if ext == "mp4" {
-		args = []string{
-			"-y", // overwrite output file
-			"-stream_loop", "-1",
-			"-i", canvas_path,
-			"-i", audiopreview_path,
-			"-map", "0:v:0",
-			"-map", "1:a:0",
-			"-t", "30",
-			"-shortest",
-			"-c:v", "copy",
-			outputPath,
-		}
-	} else {
-		// for png, jpg exts
-		args = []string{
-			"-y", // overwrite output file
-			"-loop", "1",
-			"-i", canvas_path,
-			"-i", audiopreview_path,
-			"-c:v", "libx264",
-			"-tune:v", "stillimage",
-			"-t", "30",
-			"-shortest",
-			"-filter:v", "fps=1",
-			outputPath,
-		}
-	}
-
-	cmd := exec.Command(ffmpegPath, args...)
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-
-	if err := cmd.Run(); err != nil {
-		return
-	}
-
-	cache[outputFile] = struct{}{}
-
-	return outputFile
-}
-
-func download(url string, path string) bool {
-	// Create the file
-	out, err := os.Create(path)
-	if err != nil {
-		return false
-	}
-
 	defer out.Close()
 
 	// Get the data
-	req, err := http.NewRequest("GET", url, nil)
-	if err != nil {
-		return false
-	}
-	req.Header.Set("User-Agent", "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.114 Safari/537.36")
+	req, _ := http.NewRequest("GET", url, nil)
+	req.Header.Set("User-Agent", "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.2 Safari/605.1.15")
 
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
-		return false
+		return err
 	}
-
 	defer resp.Body.Close()
 
 	// Check server response
-	if resp.StatusCode != http.StatusOK {
-		return false
+	if resp.StatusCode < 200 || resp.StatusCode > 299 {
+		return fmt.Errorf("code %v", resp.StatusCode)
 	}
+
+	_ = getExtension(resp.Header.Get("Content-Type"))
 
 	// Writer the body to file
 	_, err = io.Copy(out, resp.Body)
 	if err != nil {
-		return false
+		return err
 	}
 
 	fmt.Println("file downloaded:", path)
-	return true
+	return nil
 }
 
-func downloadGenImage(album_art, track_name, artist_name, path string) bool {
-	payload := RunPayload{
-		Size: []int{512, 576},
-		Files: []File{
-			{
-				Name: "preview.ql",
-				Code: previewGenCode,
-			},
-		},
-		Assets: []interface{}{
-			ImageAsset{
-				Name: "art",
-				Url:  album_art,
-			},
-			LiteralAsset{
-				Name:    "track_name",
-				Literal: fmt.Sprintf("\"%s\"", track_name),
-			},
-			LiteralAsset{
-				Name:    "artist_name",
-				Literal: fmt.Sprintf("\"%s\"", artist_name),
-			},
-		},
+func getExtension(contentType string) string {
+	extensions, err := mime.ExtensionsByType(contentType)
+	if err != nil || len(extensions) == 0 {
+		return ""
 	}
+	return extensions[0]
+}
 
-	// Create the file
-	out, err := os.Create(path)
+func PostJSON(url string, req any, res any) error {
+	reqBytes, err := json.Marshal(req)
 	if err != nil {
-		return false
+		return err
 	}
 
-	defer out.Close()
+	r, _ := http.NewRequest(http.MethodPost, url, bytes.NewReader(reqBytes))
 
-	jsonBytes, err := json.Marshal(payload)
+	r.Header.Set("Content-Type", "application/json")
+	r.Header.Set("Accept", "application/json")
+
+	resp, err := http.DefaultClient.Do(r)
 	if err != nil {
-		return false
+		return err
 	}
-
-	body := bytes.NewBuffer(jsonBytes)
-
-	req, err := http.NewRequest("POST", canvasBaseUrl+"/run/"+canvasSecret, body)
-	req.Header.Set("Content-Type", "application/json; charset=UTF-8")
-
-	if err != nil {
-		return false
-	}
-
-	resp, err := http.DefaultClient.Do(req)
-
-	if err != nil {
-		return false
-	}
-
 	defer resp.Body.Close()
 
-	// Check server response
-	if resp.StatusCode != http.StatusOK {
-		return false
-	}
-
-	// Writer the body to file
-	_, err = io.Copy(out, resp.Body)
+	err = json.NewDecoder(resp.Body).Decode(&res)
 	if err != nil {
-		return false
+		return err
 	}
 
-	fmt.Println("file downloaded:", path)
-	return true
-}
-
-type RunPayload struct {
-	Size   []int         `json:"size"`
-	Files  []File        `json:"files"`
-	Assets []interface{} `json:"assets"`
-}
-
-type File struct {
-	Name string `json:"name"`
-	Code string `json:"code"`
-}
-
-type ImageAsset struct {
-	Name string `json:"name"`
-	Url  string `json:"url"`
-}
-
-type LiteralAsset struct {
-	Name    string `json:"name"`
-	Literal string `json:"literal"`
+	return nil
 }
