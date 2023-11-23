@@ -102,10 +102,22 @@ func ready(s *discordgo.Session, m *discordgo.Ready) {
 	botID = m.User.ID
 }
 
-func getFilename(filename string, contentType string) (string, error) {
-	mediatype, _, err := mime.ParseMediaType(contentType)
+func getFilename(filename string, res *http.Response) (string, error) {
+	if cd := res.Header.Get("Content-Disposition"); cd != "" {
+		_, params, _ := mime.ParseMediaType(cd)
+		if name, ok := params["filename"]; ok {
+			ext := filepath.Ext(name)
+			for _, v := range mimeExtension {
+				if ext == v {
+					return filepath.Join(previewDir, filename+ext), nil
+				}
+			}
+		}
+	}
+
+	mediatype, _, err := mime.ParseMediaType(res.Header.Get("Content-Type"))
 	if err != nil {
-		return "", fmt.Errorf("error parsing mimetype: %v: %v", contentType, err)
+		return "", fmt.Errorf("error parsing mimetype: %v: %v", res.Header.Get("Content-Type"), err)
 	}
 	ext, ok := mimeExtension[mediatype]
 	if !ok {
@@ -274,7 +286,7 @@ func download(url string, filename string) (path string, err error) {
 		return "", fmt.Errorf("code %v", resp.StatusCode)
 	}
 
-	path, err = getFilename(filename, resp.Header.Get("Content-Type"))
+	path, err = getFilename(filename, resp)
 	if err != nil {
 		return "", err
 	}
