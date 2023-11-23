@@ -331,9 +331,9 @@ func downloadPicker(res *CobaltResponse, filename string) (string, error) {
 
 	var cmd *exec.Cmd
 	if res.Audio != "" {
-		cmd = exec.Command("ffmpeg", "-f", "concat", "-safe", "0", "-protocol_whitelist", "file,https,tcp,tls,pipe", "-i", "-", "-i", res.Audio, "-shortest", "-vsync", "vfr", "-pix_fmt", "yuv420p", "-y", path)
+		cmd = exec.Command("ffmpeg", "-f", "concat", "-safe", "0", "-protocol_whitelist", "file,https,tcp,tls,pipe,fd", "-i", "-", "-i", res.Audio, "-shortest", "-vsync", "vfr", "-pix_fmt", "yuv420p", "-y", "-loglevel", "warning", path)
 	} else {
-		cmd = exec.Command("ffmpeg", "-f", "concat", "-safe", "0", "-protocol_whitelist", "file,https,tcp,tls,pipe", "-i", "-", "-vsync", "vfr", "-pix_fmt", "yuv420p", "-y", path)
+		cmd = exec.Command("ffmpeg", "-f", "concat", "-safe", "0", "-protocol_whitelist", "file,https,tcp,tls,pipe,fd", "-i", "-", "-vsync", "vfr", "-pix_fmt", "yuv420p", "-y", "-loglevel", "warning", path)
 	}
 
 	out := new(bytes.Buffer)
