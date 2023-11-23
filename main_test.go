@@ -7,7 +7,6 @@ import (
 
 func TestPostJSON(t *testing.T) {
 
-	err := preview("https://x.com/DailyLoud/status/1727101147817689311?s=20", "twit.mp4")
+	fmt.Println(preview("https://vm.tiktok.com/ZMjsQTkoc/"))
 
-	fmt.Println("err", err)
 }

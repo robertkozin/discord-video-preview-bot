@@ -4,9 +4,11 @@ import (
 	"bytes"
 	"crypto/sha1"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"io/ioutil"
+	"log/slog"
 	"mime"
 	"net/http"
 	"os"
@@ -40,12 +42,13 @@ type CobaltRequest struct {
 }
 
 type CobaltResponse struct {
-	Status     string         `json:"status"` // error / redirect / stream / success / rate-limit / picker
-	Text       string         `json:"text"`
-	Url        string         `json:"url"`
-	PickerType string         `json:"pickerType"` // various / images
-	Picker     []CobaltPicker `json:"picker"`
-	Audio      string         `json:"audio"`
+	Status      string `json:"status"` // error / redirect / stream / success / rate-limit / picker
+	Text        string `json:"text"`
+	OriginalUrl string
+	Url         string         `json:"url"`
+	PickerType  string         `json:"pickerType"` // various / images
+	Picker      []CobaltPicker `json:"picker"`
+	Audio       string         `json:"audio"`
 }
 
 type CobaltPicker struct {
@@ -99,10 +102,17 @@ func ready(s *discordgo.Session, m *discordgo.Ready) {
 	botID = m.User.ID
 }
 
-func getFilename(url string) string {
-	hashUrl := fmt.Sprintf("%x", sha1.Sum([]byte(url)))[:7]
-	outputFile := hashUrl + ".mp4"
-	return outputFile
+func getFilename(filename string, contentType string) (string, error) {
+	mediatype, _, err := mime.ParseMediaType(contentType)
+	if err != nil {
+		return "", fmt.Errorf("error parsing mimetype: %v: %v", contentType, err)
+	}
+	ext, ok := mimeExtension[mediatype]
+	if !ok {
+		return "", fmt.Errorf("mimetype not supported: %v: %v", mediatype, err)
+	}
+
+	return filepath.Join(previewDir, filename+ext), nil
 }
 
 func messageCreate(s *discordgo.Session, m *discordgo.MessageCreate) {
@@ -115,28 +125,21 @@ func messageCreate(s *discordgo.Session, m *discordgo.MessageCreate) {
 		return
 	}
 
-	filename := getFilename(link)
-	path := filepath.Join(previewDir, filename)
-	output := previewBaseUrl + filename
+	_ = s.ChannelTyping(m.ChannelID)
 
-	s.ChannelTyping(m.ChannelID)
-
-	err := preview(link, path)
-
+	path, err := preview(link)
 	if err != nil {
-		output = err.Error()
-	} else {
-		_, _ = s.RequestWithBucketID("PATCH", discordgo.EndpointChannelMessage(m.ChannelID, m.ID), map[string]int{"flags": 4}, discordgo.EndpointChannelMessage(m.ChannelID, ""))
+		slog.Error("preview error", "msg", m.Content, "link", link, "err", err)
+		return
 	}
+	base := filepath.Base(path)
+	reply := previewBaseUrl + base
 
-	data := discordgo.MessageSend{
-		Content:         output,
-		Reference:       m.Reference(),
-		AllowedMentions: &discordgo.MessageAllowedMentions{},
-	}
-	newMsg, err := s.ChannelMessageSendComplex(m.ChannelID, &data)
+	_, _ = s.RequestWithBucketID("PATCH", discordgo.EndpointChannelMessage(m.ChannelID, m.ID), map[string]int{"flags": 4}, discordgo.EndpointChannelMessage(m.ChannelID, ""))
+
+	newMsg, err := s.ChannelMessageSend(m.ChannelID, reply)
 	if err != nil {
-		fmt.Println("err sending message:", err)
+		slog.Error("err sending message", "err", err)
 		return
 	}
 
@@ -151,41 +154,28 @@ func messageDelete(s *discordgo.Session, m *discordgo.MessageDelete) {
 	}
 }
 
-func fileExists(filename string) bool {
-	info, err := os.Stat(filename)
-	if os.IsNotExist(err) {
-		return false
-	}
-	return !info.IsDir()
-}
-func preview(url, filename string) (err error) {
-	if fileExists(filename) {
-		return nil
-	}
+func preview(url string) (path string, err error) {
+	filename := fmt.Sprintf("%x", sha1.Sum([]byte(url)))[:7] // First 7 chars of sha1 hash of url
 
 	var req = CobaltRequest{
 		Url: url,
 	}
 	var res CobaltResponse
 	if err = PostJSON(cobaltEndpoint, &req, &res); err != nil {
-		return err
+		return "", err
 	}
 
-	if err = handleCobalt(&res, filename); err != nil {
-		return err
-	}
-
-	return nil
-}
-
-func handleCobalt(res *CobaltResponse, filename string) error {
 	switch res.Status {
 	case "redirect":
 		return download(res.Url, filename)
 	case "stream":
 		return download(res.Url, filename)
+	case "picker":
+		return downloadPicker(&res, filename)
+	case "error":
+		return "", errors.New(res.Text)
 	default:
-		return fmt.Errorf("status not supported %v", res.Status)
+		return "", fmt.Errorf("status not supported %v", res.Status)
 	}
 }
 
@@ -268,46 +258,47 @@ func mustLookPath(file string) (path string) {
 	return path
 }
 
-func download(url, path string) error {
-	out, err := os.OpenFile(path, os.O_TRUNC|os.O_WRONLY|os.O_CREATE, os.ModePerm)
-	if err != nil {
-		return err
-	}
-	defer out.Close()
-
+func download(url string, filename string) (path string, err error) {
 	// Get the data
 	req, _ := http.NewRequest("GET", url, nil)
 	req.Header.Set("User-Agent", "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.2 Safari/605.1.15")
 
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
-		return err
+		return "", err
 	}
 	defer resp.Body.Close()
 
 	// Check server response
 	if resp.StatusCode < 200 || resp.StatusCode > 299 {
-		return fmt.Errorf("code %v", resp.StatusCode)
+		return "", fmt.Errorf("code %v", resp.StatusCode)
 	}
 
-	_ = getExtension(resp.Header.Get("Content-Type"))
+	path, err = getFilename(filename, resp.Header.Get("Content-Type"))
+	if err != nil {
+		return "", err
+	}
+
+	out, err := os.OpenFile(path, os.O_TRUNC|os.O_WRONLY|os.O_CREATE, os.ModePerm)
+	if err != nil {
+		return "", err
+	}
+	defer out.Close()
 
 	// Writer the body to file
 	_, err = io.Copy(out, resp.Body)
 	if err != nil {
-		return err
+		return "", err
 	}
 
-	fmt.Println("file downloaded:", path)
-	return nil
+	return "", nil
 }
 
-func getExtension(contentType string) string {
-	extensions, err := mime.ExtensionsByType(contentType)
-	if err != nil || len(extensions) == 0 {
-		return ""
-	}
-	return extensions[0]
+var mimeExtension = map[string]string{
+	"video/mp4":  ".mp4",
+	"image/gif":  ".gif",
+	"image/jpeg": ".jpg",
+	"image/png":  ".png",
 }
 
 func PostJSON(url string, req any, res any) error {
@@ -333,4 +324,43 @@ func PostJSON(url string, req any, res any) error {
 	}
 
 	return nil
+}
+
+func downloadPicker(res *CobaltResponse, filename string) (string, error) {
+	path, _ := getFilename(filename, "video/mp4")
+
+	var cmd *exec.Cmd
+	if res.Audio != "" {
+		cmd = exec.Command("ffmpeg", "-f", "concat", "-safe", "0", "-protocol_whitelist", "file,https,tcp,tls,pipe", "-i", "-", "-i", res.Audio, "-shortest", "-vsync", "vfr", "-pix_fmt", "yuv420p", "-y", path)
+	} else {
+		cmd = exec.Command("ffmpeg", "-f", "concat", "-safe", "0", "-protocol_whitelist", "file,https,tcp,tls,pipe", "-i", "-", "-vsync", "vfr", "-pix_fmt", "yuv420p", "-y", path)
+	}
+
+	out := new(bytes.Buffer)
+	input := formatThing(res)
+	cmd.Stdin = input
+	cmd.Stdout = out
+	cmd.Stderr = out
+
+	if err := cmd.Run(); err != nil {
+		return "", fmt.Errorf("ffmpeg err: %v: %v", err, out.String())
+	}
+
+	return path, nil
+}
+
+func formatThing(res *CobaltResponse) *bytes.Buffer {
+	var out bytes.Buffer
+
+	for _, p := range res.Picker {
+		out.WriteString("file '")
+		out.WriteString(p.Url)
+		out.WriteString("'\n")
+		out.WriteString("duration 2.5\n")
+	}
+	out.WriteString("file '")
+	out.WriteString(res.Picker[len(res.Picker)-1].Url)
+	out.WriteString("'\n")
+
+	return &out
 }
