@@ -137,7 +137,7 @@ func messageCreate(s *discordgo.Session, m *discordgo.MessageCreate) {
 
 	_, _ = s.RequestWithBucketID("PATCH", discordgo.EndpointChannelMessage(m.ChannelID, m.ID), map[string]int{"flags": 4}, discordgo.EndpointChannelMessage(m.ChannelID, ""))
 
-	newMsg, err := s.ChannelMessageSendReply(m.ChannelID, reply, m.MessageReference)
+	newMsg, err := s.ChannelMessageSendReply(m.ChannelID, reply, m.Reference())
 	if err != nil {
 		slog.Error("err sending message", "err", err)
 		return
