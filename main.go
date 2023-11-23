@@ -332,7 +332,7 @@ func downloadPicker(res *CobaltResponse, filename string) (string, error) {
 	var cmd *exec.Cmd
 	if s, ok := res.Audio.(string); ok && s != "" {
 		cmd = exec.Command("ffmpeg", "-f", "concat", "-safe", "0", "-protocol_whitelist", "file,https,tcp,tls,pipe,fd", "-i", "-", "-i", s, "-shortest", "-vsync", "vfr", "-pix_fmt", "yuv420p", "-y", "-loglevel", "warning", path)
-	} else if b, ok := res.Audio.(bool); ok && b {
+	} else if _, ok = res.Audio.(bool); ok {
 		cmd = exec.Command("ffmpeg", "-f", "concat", "-safe", "0", "-protocol_whitelist", "file,https,tcp,tls,pipe,fd", "-i", "-", "-vsync", "vfr", "-pix_fmt", "yuv420p", "-y", "-loglevel", "warning", path)
 	} else {
 		return "", fmt.Errorf("no match for picker: %+v", res)
