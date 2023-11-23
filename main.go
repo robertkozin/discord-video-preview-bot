@@ -48,7 +48,7 @@ type CobaltResponse struct {
 	Url         string         `json:"url"`
 	PickerType  string         `json:"pickerType"` // various / images
 	Picker      []CobaltPicker `json:"picker"`
-	Audio       string         `json:"audio"`
+	Audio       any            `json:"audio"`
 }
 
 type CobaltPicker struct {
@@ -330,10 +330,12 @@ func downloadPicker(res *CobaltResponse, filename string) (string, error) {
 	path, _ := getFilename(filename, "video/mp4")
 
 	var cmd *exec.Cmd
-	if res.Audio != "" {
-		cmd = exec.Command("ffmpeg", "-f", "concat", "-safe", "0", "-protocol_whitelist", "file,https,tcp,tls,pipe,fd", "-i", "-", "-i", res.Audio, "-shortest", "-vsync", "vfr", "-pix_fmt", "yuv420p", "-y", "-loglevel", "warning", path)
-	} else {
+	if s, ok := res.Audio.(string); ok && s != "" {
+		cmd = exec.Command("ffmpeg", "-f", "concat", "-safe", "0", "-protocol_whitelist", "file,https,tcp,tls,pipe,fd", "-i", "-", "-i", s, "-shortest", "-vsync", "vfr", "-pix_fmt", "yuv420p", "-y", "-loglevel", "warning", path)
+	} else if b, ok := res.Audio.(bool); ok && b {
 		cmd = exec.Command("ffmpeg", "-f", "concat", "-safe", "0", "-protocol_whitelist", "file,https,tcp,tls,pipe,fd", "-i", "-", "-vsync", "vfr", "-pix_fmt", "yuv420p", "-y", "-loglevel", "warning", path)
+	} else {
+		return "", fmt.Errorf("no match for picker: %+v", res)
 	}
 
 	out := new(bytes.Buffer)
