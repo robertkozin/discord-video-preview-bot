@@ -137,7 +137,7 @@ func messageCreate(s *discordgo.Session, m *discordgo.MessageCreate) {
 
 	_, _ = s.RequestWithBucketID("PATCH", discordgo.EndpointChannelMessage(m.ChannelID, m.ID), map[string]int{"flags": 4}, discordgo.EndpointChannelMessage(m.ChannelID, ""))
 
-	newMsg, err := s.ChannelMessageSend(m.ChannelID, reply)
+	newMsg, err := s.ChannelMessageSendReply(m.ChannelID, reply, m.MessageReference)
 	if err != nil {
 		slog.Error("err sending message", "err", err)
 		return
@@ -291,7 +291,7 @@ func download(url string, filename string) (path string, err error) {
 		return "", err
 	}
 
-	return "", nil
+	return path, nil
 }
 
 var mimeExtension = map[string]string{
