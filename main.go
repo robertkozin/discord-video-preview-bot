@@ -182,9 +182,9 @@ func messageCreate(s *discordgo.Session, m *discordgo.MessageCreate) {
 			}
 		}
 
-		reply.WriteString("__")
+		reply.WriteString("**")
 		reply.WriteString(embed.Title)
-		reply.WriteString("__")
+		reply.WriteString("**")
 
 		if embed.Description != "" {
 			reply.WriteByte(' ')
@@ -257,7 +257,7 @@ func downloadSpotify(filename string, id string) (string, error) {
 	path := filepath.Join(previewDir, filename+".mp4")
 
 	audio := spvEndpoint + id + "/audio"
-	cmd := exec.Command("ffmpeg", "-f", "concat", "-safe", "0", "-protocol_whitelist", "file,https,tcp,tls,pipe,fd", "-i", "-", "-i", audio, "-vsync", "vfr", "-pix_fmt", "yuv420p", "-movflags", "faststart", "-y", "-loglevel", "warning", path)
+	cmd := exec.Command("ffmpeg", "-f", "concat", "-safe", "0", "-protocol_whitelist", "file,https,tcp,tls,pipe,fd", "-i", "-", "-i", audio, "-vsync", "vfr", "-pix_fmt", "yuv420p", "-y", "-loglevel", "warning", path)
 
 	in := bytes.Buffer{}
 	in.WriteString("file '")
