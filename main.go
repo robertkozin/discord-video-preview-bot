@@ -17,6 +17,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -428,11 +429,13 @@ func PostJSON(url string, req any, res any) error {
 func downloadPicker(res *CobaltResponse, filename string) (string, error) {
 	path := filepath.Join(previewDir, filename+".mp4")
 
+	length := strconv.FormatFloat(float64(len(res.Picker))*2.5, 'f', -1, 64)
+
 	var cmd *exec.Cmd
 	if s, ok := res.Audio.(string); ok && s != "" {
-		cmd = exec.Command("ffmpeg", "-f", "concat", "-safe", "0", "-protocol_whitelist", "file,https,tcp,tls,pipe,fd", "-i", "-", "-i", s, "-shortest", "-vsync", "vfr", "-pix_fmt", "yuv420p", "-movflags", "faststart", "-y", "-loglevel", "warning", path)
+		cmd = exec.Command("ffmpeg", "-f", "concat", "-safe", "0", "-protocol_whitelist", "file,https,tcp,tls,pipe,fd", "-i", "-", "-i", s, "-c:v", "libx264", "-tune", "stillimage", "-preset", "ultrafast", "-c:a", "aac", "-vf", "format=yuv420p", "-r", "25", "-movflags", "faststart", "-shortest", "-t", length, "-y", "-loglevel", "warning", path)
 	} else if _, ok = res.Audio.(bool); ok {
-		cmd = exec.Command("ffmpeg", "-f", "concat", "-safe", "0", "-protocol_whitelist", "file,https,tcp,tls,pipe,fd", "-i", "-", "-vsync", "vfr", "-pix_fmt", "yuv420p", "-movflags", "faststart", "-y", "-loglevel", "warning", path)
+		cmd = exec.Command("ffmpeg", "-f", "concat", "-safe", "0", "-protocol_whitelist", "file,https,tcp,tls,pipe,fd", "-i", "-", "-c:v", "libx264", "-tune", "stillimage", "-preset", "ultrafast", "-vf", "format=yuv420p", "-r", "25", "-movflags", "faststart", "-shortest", "-t", length, "-y", "-loglevel", "warning", path)
 	} else {
 		return "", fmt.Errorf("no match for picker: %+v", res)
 	}
