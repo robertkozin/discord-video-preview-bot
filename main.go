@@ -257,7 +257,7 @@ func downloadSpotify(filename string, id string) (string, error) {
 	path := filepath.Join(previewDir, filename+".mp4")
 
 	audio := spvEndpoint + id + "/audio"
-	cmd := exec.Command("ffmpeg", "-f", "concat", "-safe", "0", "-protocol_whitelist", "file,https,tcp,tls,pipe,fd", "-i", "-", "-i", audio, "-c:v libx264 -tune stillimage -preset ultrafast -c:a aac -vf format=yuv420p -r 25 -movflags faststart -y", path)
+	cmd := exec.Command("ffmpeg", "-f", "concat", "-safe", "0", "-protocol_whitelist", "file,https,tcp,tls,pipe,fd", "-i", "-", "-i", audio, "-c:v", "libx264", "-tune", "stillimage", "-preset", "ultrafast", "-c:a", "aac", "-vf", "format=yuv420p", "-r", "25", "-movflags", "faststart", "-y", "-loglevel", "warning", path)
 
 	in := bytes.Buffer{}
 	in.WriteString("file '")
