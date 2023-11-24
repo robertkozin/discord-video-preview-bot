@@ -14,7 +14,7 @@ RUN go build -o main
 
 FROM alpine:edge
 
-RUN apk add ffmpeg
+RUN apk add --no-cache ffmpeg
 
 WORKDIR /app
 
