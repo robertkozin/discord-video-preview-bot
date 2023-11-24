@@ -36,6 +36,7 @@ var botID string
 var history = make(map[string]string)
 
 var inFlightMessages = make(map[string]*discordgo.Message)
+var channelLastMessage = make(map[string]string)
 
 var cobaltEndpoint = "https://co.wuk.sh/api/json"
 
@@ -144,6 +145,8 @@ func replaceUrls(in string) string {
 }
 
 func messageCreate(s *discordgo.Session, m *discordgo.MessageCreate) {
+	channelLastMessage[m.ChannelID] = m.ID
+
 	if m.Author.ID == botID {
 		return
 	}
@@ -197,7 +200,12 @@ func messageCreate(s *discordgo.Session, m *discordgo.MessageCreate) {
 
 	_, _ = s.RequestWithBucketID("PATCH", discordgo.EndpointChannelMessage(m.ChannelID, m.ID), map[string]int{"flags": 4}, discordgo.EndpointChannelMessage(m.ChannelID, ""))
 
-	newMsg, err := s.ChannelMessageSendReply(m.ChannelID, reply.String(), m.Reference())
+	var newMsg *discordgo.Message
+	if id, ok := channelLastMessage[m.ChannelID]; ok && id == m.ID {
+		newMsg, err = s.ChannelMessageSend(m.ChannelID, reply.String())
+	} else {
+		newMsg, err = s.ChannelMessageSendReply(m.ChannelID, reply.String(), m.Reference())
+	}
 	if err != nil {
 		slog.Error("err sending message", "err", err)
 		return
@@ -209,7 +217,7 @@ func messageCreate(s *discordgo.Session, m *discordgo.MessageCreate) {
 
 func messageDelete(s *discordgo.Session, m *discordgo.MessageDelete) {
 	if id, ok := history[m.ID]; ok {
-		s.ChannelMessageDelete(m.ChannelID, id)
+		_ = s.ChannelMessageDelete(m.ChannelID, id)
 		delete(history, m.ID)
 	}
 }
