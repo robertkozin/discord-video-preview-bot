@@ -434,8 +434,7 @@ func downloadPicker(res *CobaltResponse, filename string) (string, error) {
 	var cmd *exec.Cmd
 	fmt.Printf("%+v\n", res)
 	if s, ok := res.Audio.(string); ok && s != "" {
-		fmt.Println("doing audio")
-		cmd = exec.Command("ffmpeg", "-f", "concat", "-safe", "0", "-protocol_whitelist", "file,https,tcp,tls,pipe,fd", "-i", "-", "-i", s, "-c:v", "libx264", "-tune", "stillimage", "-preset", "ultrafast", "-c:a", "aac", "-vf", "format=yuv420p", "-r", "25", "-movflags", "faststart", "-shortest", "-t", length, "-y", "-loglevel", "warning", path)
+		cmd = exec.Command("ffmpeg", "-f", "concat", "-safe", "0", "-protocol_whitelist", "file,https,tcp,tls,pipe,fd", "-i", "-", "-i", s, "-c:v", "libx264", "-tune", "stillimage", "-preset", "ultrafast", "-c:a", "aac", "-vf", "format=yuv420p", "-r", "25", "-movflags", "faststart", "-shortest", "-t", length, "-y", path)
 	} else if _, ok = res.Audio.(bool); ok {
 		cmd = exec.Command("ffmpeg", "-f", "concat", "-safe", "0", "-protocol_whitelist", "file,https,tcp,tls,pipe,fd", "-i", "-", "-c:v", "libx264", "-tune", "stillimage", "-preset", "ultrafast", "-vf", "format=yuv420p", "-r", "25", "-movflags", "faststart", "-shortest", "-t", length, "-y", "-loglevel", "warning", path)
 	} else {
@@ -450,6 +449,10 @@ func downloadPicker(res *CobaltResponse, filename string) (string, error) {
 
 	if err := cmd.Run(); err != nil {
 		return "", fmt.Errorf("ffmpeg err: %v: %v", err, out.String())
+	}
+
+	if out.Len() > 0 {
+		slog.Error("ffmpeg output", "out", out.String())
 	}
 
 	return path, nil
