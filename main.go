@@ -17,6 +17,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"sort"
+	"strings"
 	"syscall"
 	"time"
 
@@ -33,6 +34,8 @@ var previewMatch = regexp.MustCompile(`\S+(?:tiktok\.com|instagram\.com|twitter\
 var botID string
 
 var history = make(map[string]string)
+
+var inFlightMessages = make(map[string]*discordgo.Message)
 
 var cobaltEndpoint = "https://co.wuk.sh/api/json"
 
@@ -83,6 +86,7 @@ func main() {
 	dg.AddHandler(ready)
 	dg.AddHandler(messageCreate)
 	dg.AddHandler(messageDelete)
+	dg.AddHandler(messageUpdate)
 
 	err := dg.Open()
 	if err != nil {
@@ -127,6 +131,18 @@ func getFilename(filename string, res *http.Response) (string, error) {
 	return filepath.Join(previewDir, filename+ext), nil
 }
 
+func messageUpdate(s *discordgo.Session, m *discordgo.MessageUpdate) {
+	if _, ok := inFlightMessages[m.ID]; ok {
+		inFlightMessages[m.ID] = m.Message
+	}
+}
+
+var matchUrl = regexp.MustCompile(`https?://\S+`)
+
+func replaceUrls(in string) string {
+	return matchUrl.ReplaceAllString(in, `<$0>`)
+}
+
 func messageCreate(s *discordgo.Session, m *discordgo.MessageCreate) {
 	if m.Author.ID == botID {
 		return
@@ -137,6 +153,9 @@ func messageCreate(s *discordgo.Session, m *discordgo.MessageCreate) {
 		return
 	}
 
+	inFlightMessages[m.ID] = m.Message
+	defer delete(inFlightMessages, m.ID)
+
 	_ = s.ChannelTyping(m.ChannelID)
 
 	path, err := preview(link)
@@ -145,11 +164,40 @@ func messageCreate(s *discordgo.Session, m *discordgo.MessageCreate) {
 		return
 	}
 	base := filepath.Base(path)
-	reply := previewBaseUrl + base
+	reply := strings.Builder{}
+
+	if newMsg, ok := inFlightMessages[m.ID]; ok && len(newMsg.Embeds) > 0 {
+		embed := newMsg.Embeds[0]
+		if embed.Title == "" {
+			if embed.Author != nil && embed.Author.Name != "" {
+				embed.Title = embed.Author.Name
+			} else {
+				embed.Title = "."
+			}
+		}
+
+		reply.WriteString("[")
+		reply.WriteString(embed.Title)
+		reply.WriteString("](")
+		reply.WriteString(previewBaseUrl)
+		reply.WriteString(base)
+		reply.WriteString(")")
+
+		if embed.Description != "" {
+			reply.WriteByte(' ')
+			reply.WriteString(replaceUrls(embed.Description))
+		}
+
+	} else {
+		reply.WriteString("[.](")
+		reply.WriteString(previewBaseUrl)
+		reply.WriteString(base)
+		reply.WriteByte(')')
+	}
 
 	_, _ = s.RequestWithBucketID("PATCH", discordgo.EndpointChannelMessage(m.ChannelID, m.ID), map[string]int{"flags": 4}, discordgo.EndpointChannelMessage(m.ChannelID, ""))
 
-	newMsg, err := s.ChannelMessageSendReply(m.ChannelID, reply, m.Reference())
+	newMsg, err := s.ChannelMessageSendReply(m.ChannelID, reply.String(), m.Reference())
 	if err != nil {
 		slog.Error("err sending message", "err", err)
 		return
@@ -339,7 +387,7 @@ func PostJSON(url string, req any, res any) error {
 }
 
 func downloadPicker(res *CobaltResponse, filename string) (string, error) {
-	path, _ := getFilename(filename, "video/mp4")
+	path := filepath.Join(previewDir, filename+".mp4")
 
 	var cmd *exec.Cmd
 	if s, ok := res.Audio.(string); ok && s != "" {
