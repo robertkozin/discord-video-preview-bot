@@ -29,7 +29,7 @@ var previewDir = mustGetEnvString("PREVIEW_DIR")
 var previewBaseUrl = mustGetEnvString("PREVIEW_BASE_URL")
 
 // TODO: Improve this to include short links
-var previewMatch = regexp.MustCompile(`\S+(?:tiktok\.com|instagram\.com|twitter\.com|://t\.co|reddit\.com|redd\.it|clips\.twitch\.tv|youtube.com/shorts/|://x.com)\S+`)
+var previewMatch = regexp.MustCompile(`\S+(?:tiktok\.com|instagram\.com|twitter\.com|://t\.co|reddit\.com|redd\.it|clips\.twitch\.tv|youtube.com/shorts/|://x.com|spotify.com/track/)\S+`)
 
 var botID string
 
@@ -38,7 +38,8 @@ var history = make(map[string]string)
 var inFlightMessages = make(map[string]*discordgo.Message)
 var channelLastMessage = make(map[string]string)
 
-var cobaltEndpoint = "https://co.wuk.sh/api/json"
+var cobaltEndpoint = "https://co.wuk.sh/api/json"    // https://github.com/wukko/cobalt
+var spvEndpoint = "https://spv.ncp.nathanferns.xyz/" // https://github.com/nathanielfernandes/spv
 
 type CobaltRequest struct {
 	Url             string `json:"url"`
@@ -174,29 +175,28 @@ func messageCreate(s *discordgo.Session, m *discordgo.MessageCreate) {
 		if embed.Title == "" {
 			if embed.Author != nil && embed.Author.Name != "" {
 				embed.Title = embed.Author.Name
+			} else if embed.Provider != nil && embed.Provider.Name != "" {
+				embed.Title = embed.Provider.Name
 			} else {
-				embed.Title = "."
+				embed.Title = ""
 			}
 		}
 
-		reply.WriteString("[")
+		reply.WriteString("__")
 		reply.WriteString(embed.Title)
-		reply.WriteString("](")
-		reply.WriteString(previewBaseUrl)
-		reply.WriteString(base)
-		reply.WriteString(")")
+		reply.WriteString("__")
 
 		if embed.Description != "" {
 			reply.WriteByte(' ')
 			reply.WriteString(replaceUrls(embed.Description))
 		}
 
-	} else {
-		reply.WriteString("[.](")
-		reply.WriteString(previewBaseUrl)
-		reply.WriteString(base)
-		reply.WriteByte(')')
 	}
+
+	reply.WriteString("[.](")
+	reply.WriteString(previewBaseUrl)
+	reply.WriteString(base)
+	reply.WriteByte(')')
 
 	_, _ = s.RequestWithBucketID("PATCH", discordgo.EndpointChannelMessage(m.ChannelID, m.ID), map[string]int{"flags": 4}, discordgo.EndpointChannelMessage(m.ChannelID, ""))
 
@@ -222,8 +222,14 @@ func messageDelete(s *discordgo.Session, m *discordgo.MessageDelete) {
 	}
 }
 
+var matchSpotifyTrack = regexp.MustCompile(`spotify\.com/track/([a-zA-Z0-9]+)\S+`)
+
 func preview(url string) (path string, err error) {
 	filename := fmt.Sprintf("%x", sha1.Sum([]byte(url)))[:7] // First 7 chars of sha1 hash of url
+
+	if m := matchSpotifyTrack.FindStringSubmatch(url); len(m) != 0 {
+		return downloadSpotify(filename, m[1])
+	}
 
 	var req = CobaltRequest{
 		Url: url,
@@ -245,6 +251,30 @@ func preview(url string) (path string, err error) {
 	default:
 		return "", fmt.Errorf("status not supported %v", res.Status)
 	}
+}
+
+func downloadSpotify(filename string, id string) (string, error) {
+	path := filepath.Join(previewDir, filename+".mp4")
+
+	audio := spvEndpoint + id + "/audio"
+	cmd := exec.Command("ffmpeg", "-f", "concat", "-safe", "0", "-protocol_whitelist", "file,https,tcp,tls,pipe,fd", "-i", "-", "-i", audio, "-vsync", "vfr", "-pix_fmt", "yuv420p", "-movflags", "faststart", "-y", "-loglevel", "warning", path)
+
+	in := bytes.Buffer{}
+	in.WriteString("file '")
+	in.WriteString(spvEndpoint)
+	in.WriteString(id)
+	in.WriteString("'\n")
+	out := bytes.Buffer{}
+
+	cmd.Stdin = &in
+	cmd.Stdout = &out
+	cmd.Stderr = &out
+
+	if err := cmd.Run(); err != nil {
+		return "", fmt.Errorf("ffmpeg err: %v: %v", err, out.String())
+	}
+
+	return path, nil
 }
 
 // loop through all ids in the sent history and delete any id's older than a day
@@ -399,9 +429,9 @@ func downloadPicker(res *CobaltResponse, filename string) (string, error) {
 
 	var cmd *exec.Cmd
 	if s, ok := res.Audio.(string); ok && s != "" {
-		cmd = exec.Command("ffmpeg", "-f", "concat", "-safe", "0", "-protocol_whitelist", "file,https,tcp,tls,pipe,fd", "-i", "-", "-i", s, "-shortest", "-vsync", "vfr", "-pix_fmt", "yuv420p", "-y", "-loglevel", "warning", path)
+		cmd = exec.Command("ffmpeg", "-f", "concat", "-safe", "0", "-protocol_whitelist", "file,https,tcp,tls,pipe,fd", "-i", "-", "-i", s, "-shortest", "-vsync", "vfr", "-pix_fmt", "yuv420p", "-movflags", "faststart", "-y", "-loglevel", "warning", path)
 	} else if _, ok = res.Audio.(bool); ok {
-		cmd = exec.Command("ffmpeg", "-f", "concat", "-safe", "0", "-protocol_whitelist", "file,https,tcp,tls,pipe,fd", "-i", "-", "-vsync", "vfr", "-pix_fmt", "yuv420p", "-y", "-loglevel", "warning", path)
+		cmd = exec.Command("ffmpeg", "-f", "concat", "-safe", "0", "-protocol_whitelist", "file,https,tcp,tls,pipe,fd", "-i", "-", "-vsync", "vfr", "-pix_fmt", "yuv420p", "-movflags", "faststart", "-y", "-loglevel", "warning", path)
 	} else {
 		return "", fmt.Errorf("no match for picker: %+v", res)
 	}
