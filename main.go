@@ -359,11 +359,7 @@ func mustLookPath(file string) (path string) {
 }
 
 func download(url string, filename string) (path string, err error) {
-	// Get the data
-	req, _ := http.NewRequest("GET", url, nil)
-	req.Header.Set("User-Agent", "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.2 Safari/605.1.15")
-
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := http.Get(url)
 	if err != nil {
 		return "", err
 	}
