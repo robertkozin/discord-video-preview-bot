@@ -63,6 +63,14 @@ type CobaltPicker struct {
 	Thumb string `json:"thumb"`
 }
 
+// Todo: Fix tiktok slideshow: https://www.tiktok.com/@ridingtojisface/video/7304371224690396447
+// Todo: Make file already exists cache (after embed update after replied)
+// Todo: download things from picker instead of using url
+// Todo: Support 'various' picker
+// Todo: self host cobalt api
+// Todo: message getting an embed after posted and update reply with embed data
+// Todo: don't reply if message got deleted
+
 func main() {
 	// Ensure preview dir exists
 	os.MkdirAll(previewDir, os.ModePerm)
