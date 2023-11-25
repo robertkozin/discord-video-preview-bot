@@ -263,7 +263,8 @@ func downloadSpotify(filename string, id string) (string, error) {
 	}{}
 	GetJSON(spvEndpoint+id+"/info", res)
 
-	if res.CanvasUrl != "" {
+	hasCanvas := res.CanvasUrl != ""
+	if hasCanvas && strings.HasSuffix(res.CanvasUrl, ".mp4") {
 		imagePath, err := download(spvEndpoint+id+"?overlay=1", id+"_temp")
 
 		if err != nil {
@@ -279,14 +280,13 @@ func downloadSpotify(filename string, id string) (string, error) {
 			"-i", res.CanvasUrl,
 			"-i", res.AudioUrl,
 			"-i", imagePath,
-			"-filter_complex", "[0:v]fps=25,scale=720:1280,setpts=N/(25*TB),loop=loop=-1:size=500:start=0[v];[v][2:v] overlay=25:25:enable='between(t,0,20)'",
+			"-filter_complex", "[0:v]scale=720:1280[v];[v][2:v] overlay=25:25:enable='between(t,0,20)'",
 			"-map", "0:v:0",
 			"-map", "1:a:0",
 			"-t", "30",
 			"-shortest",
 			"-c:v", "libx264",
 			"-preset", "ultrafast",
-			"-c:a", "copy",
 			"-r", "24",
 			"-pix_fmt", "yuv420p",
 			path,
@@ -308,6 +308,9 @@ func downloadSpotify(filename string, id string) (string, error) {
 		in.WriteString("file '")
 		in.WriteString(spvEndpoint)
 		in.WriteString(id)
+		if hasCanvas {
+			in.WriteString("?overlay=1")
+		}
 		in.WriteString("'\n")
 		in.WriteString("duration 30\n")
 		out := bytes.Buffer{}
