@@ -124,7 +124,7 @@ func getFilename(filename string, res *http.Response) (string, error) {
 			ext := filepath.Ext(name)
 			for _, v := range mimeExtension {
 				if ext == v {
-					return filepath.Join(previewDir, filename+ext), nil
+					return filename + ext, nil
 				}
 			}
 		}
@@ -139,7 +139,7 @@ func getFilename(filename string, res *http.Response) (string, error) {
 		return "", fmt.Errorf("mimetype not supported: %v: %v", mediatype, err)
 	}
 
-	return filepath.Join(previewDir, filename+ext), nil
+	return filename + ext, nil
 }
 
 func messageUpdate(s *discordgo.Session, m *discordgo.MessageUpdate) {
@@ -234,7 +234,7 @@ func messageDelete(s *discordgo.Session, m *discordgo.MessageDelete) {
 var matchSpotifyTrack = regexp.MustCompile(`spotify\.com/track/([a-zA-Z0-9]+)\S+`)
 
 func preview(url string) (path string, err error) {
-	filename := fmt.Sprintf("%x", sha1.Sum([]byte(url)))[:7] // First 7 chars of sha1 hash of url
+	filename := sha7(url) // First 7 chars of sha1 hash of url
 
 	if m := matchSpotifyTrack.FindStringSubmatch(url); len(m) != 0 {
 		return downloadSpotify(filename, m[1])
@@ -250,8 +250,10 @@ func preview(url string) (path string, err error) {
 
 	switch res.Status {
 	case "redirect":
+		filename = filepath.Join(previewDir, filename)
 		return download(res.Url, filename)
 	case "stream":
+		filename = filepath.Join(previewDir, filename)
 		return download(res.Url, filename)
 	case "picker":
 		return downloadPicker(&res, filename)
@@ -311,20 +313,36 @@ func downloadSpotify(filename string, id string) (string, error) {
 
 		return path, nil
 	} else {
-		cmd := exec.Command("ffmpeg", "-f", "concat", "-safe", "0", "-protocol_whitelist", "file,https,tcp,tls,pipe,fd", "-i", "-", "-i", res.AudioUrl, "-c:v", "libx264", "-tune", "stillimage", "-preset", "superfast", "-c:a", "aac", "-vf", "format=yuv420p", "-r", "25", "-movflags", "faststart", "-y", "-loglevel", "warning", path)
-
-		in := bytes.Buffer{}
-		in.WriteString("file '")
-		in.WriteString(spvEndpoint)
-		in.WriteString(id)
+		// download image
+		imageUrl := spvEndpoint + id
 		if hasCanvas {
-			in.WriteString("?overlay=1")
+			imageUrl += "?overlay=1"
 		}
-		in.WriteString("'\n")
-		in.WriteString("duration 30\n")
-		out := bytes.Buffer{}
 
-		cmd.Stdin = &in
+		imagePath, err := download(imageUrl, id+"_image")
+		if err != nil {
+			return "", err
+		}
+		defer os.Remove(imagePath)
+
+		cmd := exec.Command(
+			"ffmpeg",
+			"-y",
+			"-loop", "1",
+			"-i", imagePath,
+			"-i", res.AudioUrl,
+			"-tune", "stillimage",
+			"-t", "30",
+			"-shortest",
+			"-c:a", "aac",
+			"-preset", "superfast",
+			"-movflags", "faststart",
+			"-r", "24",
+			"-pix_fmt", "yuv420p",
+			path,
+		)
+
+		out := bytes.Buffer{}
 		cmd.Stdout = &out
 		cmd.Stderr = &out
 
@@ -447,6 +465,20 @@ func download(url string, filename string) (path string, err error) {
 	return path, nil
 }
 
+func downloadConcurrent(urls []string, filenames []string) (paths []string, all_ok bool) {
+	all_ok = true
+	paths = make([]string, len(urls))
+	for i, url := range urls {
+		path, err := download(url, filenames[i])
+		if err != nil {
+			all_ok = false
+		}
+		paths[i] = path
+	}
+
+	return paths, all_ok
+}
+
 var mimeExtension = map[string]string{
 	"video/mp4":  ".mp4",
 	"image/gif":  ".gif",
@@ -500,29 +532,82 @@ func GetJSON(url string, res any) error {
 }
 
 func downloadPicker(res *CobaltResponse, filename string) (string, error) {
-	path := filepath.Join(previewDir, filename+".mp4")
-
-	length := strconv.FormatFloat(float64(len(res.Picker))*2.5, 'f', -1, 64)
-
-	var cmd *exec.Cmd
 	fmt.Printf("%+v\n", res)
 	if s, ok := res.Audio.(string); ok && s != "" {
+		// final path
+		path := filepath.Join(previewDir, filename+".mp4")
+
+		// make temp dir for all artifacts
+		tempDir, err := os.MkdirTemp(previewDir, "picker*")
+		if err != nil {
+			return "", fmt.Errorf("err creating temp dir: %v", err)
+		}
+		defer os.RemoveAll(tempDir)
+
+		filename = filepath.Join(tempDir, filename)
+
 		audioPath, err := download(s, filename+"_audio")
 		if err != nil {
 			return "", fmt.Errorf("err downloading audio: %v", err)
 		}
-		defer os.Remove(audioPath)
 
-		cmd = exec.Command("ffmpeg", "-f", "concat", "-safe", "0", "-protocol_whitelist", "file,https,tcp,tls,pipe,fd", "-i", "-", "-i", audioPath, "-c:v", "libx264", "-tune", "stillimage", "-preset", "ultrafast", "-c:a", "aac", "-vf", "format=yuv420p", "-r", "25", "-movflags", "faststart", "-shortest", "-t", length, "-y", path)
+		videoPath, err := buildPickerVideo(res, tempDir)
+		if err != nil {
+			return "", fmt.Errorf("err building video: %v", err)
+		}
+
+		cmd := exec.Command("ffmpeg",
+			"-i", videoPath,
+			"-i", audioPath,
+			"-c:v", "copy",
+			"-c:a", "aac",
+			"-shortest",
+			"-y", path,
+		)
+
+		out := new(bytes.Buffer)
+		cmd.Stdout = out
+		cmd.Stderr = out
+
+		if err := cmd.Run(); err != nil {
+			return "", fmt.Errorf("ffmpeg err: %v: %v", err, out.String())
+		}
+
+		if out.Len() > 0 {
+			slog.Error("ffmpeg output", "out", out.String())
+		}
+
+		return path, nil
 	} else if _, ok = res.Audio.(bool); ok {
-		cmd = exec.Command("ffmpeg", "-f", "concat", "-safe", "0", "-protocol_whitelist", "file,https,tcp,tls,pipe,fd", "-i", "-", "-c:v", "libx264", "-tune", "stillimage", "-preset", "ultrafast", "-vf", "format=yuv420p", "-r", "25", "-movflags", "faststart", "-shortest", "-t", length, "-y", "-loglevel", "warning", path)
+		return buildPickerVideo(res, filename)
 	} else {
 		return "", fmt.Errorf("no match for picker: %+v", res)
 	}
+}
+
+func buildPickerVideo(res *CobaltResponse, dir string) (string, error) {
+	// only video do not have audio
+	filename := sha7(res.Url)
+	path := filepath.Join(dir, filename+"_images.mp4")
+	length := strconv.FormatFloat(float64(len(res.Picker))*2.5, 'f', -1, 64)
+
+	seq := formatSequentialThing(res, dir)
+	cmd := exec.Command("ffmpeg",
+		"-framerate", "0.4", // 1 frame every 2.5 seconds
+		"-start_number", "0",
+		"-i", seq,
+		"-c:v", "libx264",
+		"-tune", "stillimage",
+		"-preset", "ultrafast",
+		"-c:a", "aac",
+		// allow for any width and height
+		"-vf", "scale=trunc(iw/2)*2:trunc(ih/2)*2,format=yuv420p",
+		"-shortest",
+		"-t", length, // Set the total video duration as needed
+		"-y", path,
+	)
 
 	out := new(bytes.Buffer)
-	input := formatThing(res)
-	cmd.Stdin = input
 	cmd.Stdout = out
 	cmd.Stderr = out
 
@@ -537,7 +622,7 @@ func downloadPicker(res *CobaltResponse, filename string) (string, error) {
 	return path, nil
 }
 
-func formatThing(res *CobaltResponse) *bytes.Buffer {
+func formatConcatThing(res *CobaltResponse) *bytes.Buffer {
 	var out bytes.Buffer
 
 	for _, p := range res.Picker {
@@ -551,4 +636,30 @@ func formatThing(res *CobaltResponse) *bytes.Buffer {
 	out.WriteString("'\n")
 
 	return &out
+}
+
+func formatSequentialThing(res *CobaltResponse, dir string) string {
+	base := filepath.Join(dir, sha7(res.Url))
+
+	filenames := make([]string, len(res.Picker))
+	urls := make([]string, len(res.Picker))
+
+	for i, p := range res.Picker {
+		filenames[i] = base + "_" + strconv.Itoa(i)
+		urls[i] = p.Url
+	}
+
+	paths, ok := downloadConcurrent(urls, filenames)
+
+	if len(paths) == 0 || !ok {
+		return ""
+	}
+
+	ext := filepath.Ext(paths[0])
+
+	return base + "_%d" + ext
+}
+
+func sha7(s string) string {
+	return fmt.Sprintf("%x", sha1.Sum([]byte(s)))[:7] // First 7 chars of sha1 hash of s
 }
