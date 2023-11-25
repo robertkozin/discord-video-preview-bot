@@ -286,7 +286,8 @@ func downloadSpotify(filename string, id string) (string, error) {
 			"-t", "30",
 			"-shortest",
 			"-c:v", "libx264",
-			"-preset", "veryfast",
+			"-preset", "superfast",
+			"-movflags", "faststart",
 			"-r", "24",
 			"-pix_fmt", "yuv420p",
 			path,
@@ -302,7 +303,7 @@ func downloadSpotify(filename string, id string) (string, error) {
 
 		return path, nil
 	} else {
-		cmd := exec.Command("ffmpeg", "-f", "concat", "-safe", "0", "-protocol_whitelist", "file,https,tcp,tls,pipe,fd", "-i", "-", "-i", res.AudioUrl, "-c:v", "libx264", "-tune", "stillimage", "-preset", "ultrafast", "-c:a", "aac", "-vf", "format=yuv420p", "-r", "25", "-movflags", "faststart", "-y", "-loglevel", "warning", path)
+		cmd := exec.Command("ffmpeg", "-f", "concat", "-safe", "0", "-protocol_whitelist", "file,https,tcp,tls,pipe,fd", "-i", "-", "-i", res.AudioUrl, "-c:v", "libx264", "-tune", "stillimage", "-preset", "superfast", "-c:a", "aac", "-vf", "format=yuv420p", "-r", "25", "-movflags", "faststart", "-y", "-loglevel", "warning", path)
 
 		in := bytes.Buffer{}
 		in.WriteString("file '")
