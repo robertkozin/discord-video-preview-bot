@@ -257,26 +257,71 @@ func preview(url string) (path string, err error) {
 func downloadSpotify(filename string, id string) (string, error) {
 	path := filepath.Join(previewDir, filename+".mp4")
 
-	audio := spvEndpoint + id + "/audio"
-	cmd := exec.Command("ffmpeg", "-f", "concat", "-safe", "0", "-protocol_whitelist", "file,https,tcp,tls,pipe,fd", "-i", "-", "-i", audio, "-c:v", "libx264", "-tune", "stillimage", "-preset", "ultrafast", "-c:a", "aac", "-vf", "format=yuv420p", "-r", "25", "-movflags", "faststart", "-y", "-loglevel", "warning", path)
+	res := &struct {
+		CanvasUrl string `json:"canvas_url,omitempty"`
+		AudioUrl  string `json:"audio_url"`
+	}{}
+	GetJSON(spvEndpoint+id+"/info", res)
 
-	in := bytes.Buffer{}
-	in.WriteString("file '")
-	in.WriteString(spvEndpoint)
-	in.WriteString(id)
-	in.WriteString("'\n")
-	in.WriteString("duration 30\n")
-	out := bytes.Buffer{}
+	if res.CanvasUrl != "" {
+		imagePath, err := download(spvEndpoint+id+"?overlay=1", id+"_temp")
 
-	cmd.Stdin = &in
-	cmd.Stdout = &out
-	cmd.Stderr = &out
+		if err != nil {
+			return "", err
+		}
 
-	if err := cmd.Run(); err != nil {
-		return "", fmt.Errorf("ffmpeg err: %v: %v", err, out.String())
+		defer os.Remove(imagePath)
+
+		cmd := exec.Command(
+			"ffmpeg",
+			"-y",
+			"-stream_loop", "-1",
+			"-i", res.CanvasUrl,
+			"-i", res.AudioUrl,
+			"-i", imagePath,
+			"-filter_complex", "[0:v]fps=25,scale=720:1280,setpts=N/(25*TB),loop=loop=-1:size=500:start=0[v];[v][2:v] overlay=25:25:enable='between(t,0,20)'",
+			"-map", "0:v:0",
+			"-map", "1:a:0",
+			"-t", "30",
+			"-shortest",
+			"-c:v", "libx264",
+			"-preset", "ultrafast",
+			"-c:a", "copy",
+			"-r", "24",
+			"-pix_fmt", "yuv420p",
+			path,
+		)
+
+		out := bytes.Buffer{}
+		cmd.Stdout = &out
+		cmd.Stderr = &out
+
+		if err := cmd.Run(); err != nil {
+			return "", fmt.Errorf("ffmpeg err: %v: %v", err, out.String())
+		}
+
+		return path, nil
+	} else {
+		cmd := exec.Command("ffmpeg", "-f", "concat", "-safe", "0", "-protocol_whitelist", "file,https,tcp,tls,pipe,fd", "-i", "-", "-i", res.AudioUrl, "-c:v", "libx264", "-tune", "stillimage", "-preset", "ultrafast", "-c:a", "aac", "-vf", "format=yuv420p", "-r", "25", "-movflags", "faststart", "-y", "-loglevel", "warning", path)
+
+		in := bytes.Buffer{}
+		in.WriteString("file '")
+		in.WriteString(spvEndpoint)
+		in.WriteString(id)
+		in.WriteString("'\n")
+		in.WriteString("duration 30\n")
+		out := bytes.Buffer{}
+
+		cmd.Stdin = &in
+		cmd.Stdout = &out
+		cmd.Stderr = &out
+
+		if err := cmd.Run(); err != nil {
+			return "", fmt.Errorf("ffmpeg err: %v: %v", err, out.String())
+		}
+
+		return path, nil
 	}
-
-	return path, nil
 }
 
 // loop through all ids in the sent history and delete any id's older than a day
@@ -406,6 +451,25 @@ func PostJSON(url string, req any, res any) error {
 	r, _ := http.NewRequest(http.MethodPost, url, bytes.NewReader(reqBytes))
 
 	r.Header.Set("Content-Type", "application/json")
+	r.Header.Set("Accept", "application/json")
+
+	resp, err := http.DefaultClient.Do(r)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	err = json.NewDecoder(resp.Body).Decode(&res)
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func GetJSON(url string, res any) error {
+	r, _ := http.NewRequest(http.MethodGet, url, nil)
+
 	r.Header.Set("Accept", "application/json")
 
 	resp, err := http.DefaultClient.Do(r)
