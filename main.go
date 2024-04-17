@@ -11,6 +11,8 @@ import (
 	"log/slog"
 	"mime"
 	"net/http"
+	"net/http/httputil"
+	"net/url"
 	"os"
 	"os/exec"
 	"os/signal"
@@ -25,12 +27,11 @@ import (
 	"github.com/bwmarrin/discordgo"
 )
 
-var discordToken = mustGetEnvString("DISCORD_TOKEN")
-var previewDir = mustGetEnvString("PREVIEW_DIR")
-var previewBaseUrl = mustGetEnvString("PREVIEW_BASE_URL")
+var discordToken = ""   //mustGetEnvString("DISCORD_TOKEN")
+var previewDir = "."    // mustGetEnvString("PREVIEW_DIR")
+var previewBaseUrl = "" // mustGetEnvString("PREVIEW_BASE_URL")
 
-// TODO: Improve this to include short links
-var previewMatch = regexp.MustCompile(`\S+(?:tiktok\.com|instagram\.com|twitter\.com|://t\.co|reddit\.com|redd\.it|clips\.twitch\.tv|youtube.com/shorts/|://x.com|spotify.com/track/)\S+`)
+var linkMatch = regexp.MustCompile(`https://\S+`)
 
 var botID string
 
@@ -122,6 +123,7 @@ func getFilename(filename string, res *http.Response) (string, error) {
 		_, params, _ := mime.ParseMediaType(cd)
 		if name, ok := params["filename"]; ok {
 			ext := filepath.Ext(name)
+			ext = strings.ToLower(ext)
 			for _, v := range mimeExtension {
 				if ext == v {
 					return filename + ext, nil
@@ -148,11 +150,13 @@ func messageUpdate(s *discordgo.Session, m *discordgo.MessageUpdate) {
 	}
 }
 
-var matchUrl = regexp.MustCompile(`https?://\S+`)
+var matchUrl = regexp.MustCompile(`https://\S+`)
 
 func replaceUrls(in string) string {
 	return matchUrl.ReplaceAllString(in, `<$0>`)
 }
+
+var downloaders = []func(string) (string, error){ssvid, cobalt, spotify}
 
 func messageCreate(s *discordgo.Session, m *discordgo.MessageCreate) {
 	channelLastMessage[m.ChannelID] = m.ID
@@ -161,7 +165,7 @@ func messageCreate(s *discordgo.Session, m *discordgo.MessageCreate) {
 		return
 	}
 
-	link := previewMatch.FindString(m.Content)
+	link := matchUrl.FindString(m.Content)
 	if link == "" {
 		return
 	}
@@ -169,13 +173,24 @@ func messageCreate(s *discordgo.Session, m *discordgo.MessageCreate) {
 	inFlightMessages[m.ID] = m.Message
 	defer delete(inFlightMessages, m.ID)
 
-	_ = s.ChannelTyping(m.ChannelID)
+	//_ = s.ChannelTyping(m.ChannelID)
 
-	path, err := preview(link)
-	if err != nil {
-		slog.Error("preview error", "msg", m.Content, "link", link, "err", err)
+	var path string
+	var err error
+	for _, downloader := range downloaders {
+		path, err = downloader(link)
+		if err != nil {
+			slog.Error("downloader", "link", link, "err", err)
+		}
+		if path != "" {
+			break
+		}
+	}
+
+	if path == "" {
 		return
 	}
+
 	base := filepath.Base(path)
 	reply := strings.Builder{}
 
@@ -233,12 +248,27 @@ func messageDelete(s *discordgo.Session, m *discordgo.MessageDelete) {
 
 var matchSpotifyTrack = regexp.MustCompile(`spotify\.com/track/([a-zA-Z0-9]+)\S+`)
 
-func preview(url string) (path string, err error) {
-	filename := sha7(url) // First 7 chars of sha1 hash of url
+// TODO: Improve this to include short links
+var previewMatch = regexp.MustCompile(`\S+(?:tiktok\.com|instagram\.com|twitter\.com|://t\.co|reddit\.com|redd\.it|clips\.twitch\.tv|youtube.com/shorts/|://x.com|spotify.com/track/)\S+`)
 
-	if m := matchSpotifyTrack.FindStringSubmatch(url); len(m) != 0 {
-		return downloadSpotify(filename, m[1])
+var isCobalt = filterUrls(
+	`tiktok\.com`,
+	`instagram\.com`,
+	`twitter\.com`,
+	`://t\.co`,
+	`reddit.com`,
+	`redd.it`,
+	`clips\.twitch\.tv`,
+	`youtube\.com/shorts/`,
+	`://x\.com`,
+)
+
+func cobalt(url string) (path string, err error) {
+	if !isCobalt(url) {
+		return "", nil
 	}
+
+	filename := sha7(url) // First 7 chars of sha1 hash of url
 
 	var req = CobaltRequest{
 		Url: url,
@@ -262,6 +292,14 @@ func preview(url string) (path string, err error) {
 	default:
 		return "", fmt.Errorf("status not supported %v", res.Status)
 	}
+}
+
+func spotify(u string) (string, error) {
+	if m := matchSpotifyTrack.FindStringSubmatch(u); len(m) != 0 {
+		filename := sha7(u)
+		return downloadSpotify(filename, m[1])
+	}
+	return "", nil
 }
 
 func downloadSpotify(filename string, id string) (string, error) {
@@ -662,4 +700,98 @@ func formatSequentialThing(res *CobaltResponse, dir string) string {
 
 func sha7(s string) string {
 	return fmt.Sprintf("%x", sha1.Sum([]byte(s)))[:7] // First 7 chars of sha1 hash of s
+}
+
+type ssvidResponse struct {
+	Status string `json:"status"`
+	Mess   string `json:"mess"`
+	P      string `json:"p"`
+	Data   struct {
+		Page      string `json:"page"`
+		Extractor string `json:"extractor"`
+		Status    string `json:"status"`
+		Keyword   string `json:"keyword"`
+		Title     string `json:"title"`
+		Thumbnail string `json:"thumbnail"`
+		Pid       string `json:"pid"`
+		Links     struct {
+			Video []struct {
+				QText string `json:"q_text"`
+				Size  string `json:"size"`
+				URL   string `json:"url"`
+			} `json:"video"`
+		} `json:"links"`
+		Author struct {
+			Username string `json:"username"`
+			FullName string `json:"full_name"`
+			Avatar   string `json:"avatar"`
+		} `json:"author"`
+	} `json:"data"`
+}
+
+var isSsvid = filterUrls(
+	`instagram\.com`,
+	`tiktok\.com`,
+)
+
+func ssvid(u string) (path string, err error) {
+	if !isSsvid(u) {
+		return "", nil
+	}
+
+	data := url.Values{
+		"query": {u},
+		"vt":    {"home"},
+	}
+	req, _ := http.NewRequest("POST", "https://www.ssvid.net/api/ajax/search", strings.NewReader(data.Encode()))
+	req.Header.Set("User-Agent", "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.3.1 Safari/605.1.15")
+	req.Header.Set("X-Requested-With", "XMLHttpRequest")
+	req.Header.Set("Host", "www.ssvid.net")
+	req.Header.Set("Origin", "https://www.ssvid.net")
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded; charset=UTF-8")
+	req.Header.Set("Accept", "application/json")
+
+	body, _ := httputil.DumpRequest(req, true)
+	fmt.Println(string(body))
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		printResponse(resp)
+		return "", err
+	}
+	defer resp.Body.Close()
+	printResponse(resp)
+
+	var ssvidResp ssvidResponse
+	err = json.NewDecoder(resp.Body).Decode(&ssvidResp)
+	if err != nil {
+		return "", err
+	}
+
+	if len(ssvidResp.Data.Links.Video) == 0 {
+		return "", fmt.Errorf("no videos in response")
+	}
+
+	filename := filepath.Join(previewBaseUrl, sha7(u))
+	return download(ssvidResp.Data.Links.Video[0].URL, filename)
+}
+
+func printResponse(resp *http.Response) {
+	b, _ := httputil.DumpResponse(resp, true)
+	fmt.Println(string(b))
+}
+
+func filterUrls(u ...string) func(string) bool {
+	filters := make([]*regexp.Regexp, len(u))
+	for i := 0; i < len(u); i++ {
+		filters[i] = regexp.MustCompile(u[i])
+	}
+	return func(s string) bool {
+		for _, filter := range filters {
+			if filter.MatchString(s) {
+				return true
+			}
+		}
+		return false
+	}
 }
