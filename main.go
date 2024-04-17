@@ -27,9 +27,9 @@ import (
 	"github.com/bwmarrin/discordgo"
 )
 
-var discordToken = ""   //mustGetEnvString("DISCORD_TOKEN")
-var previewDir = "."    // mustGetEnvString("PREVIEW_DIR")
-var previewBaseUrl = "" // mustGetEnvString("PREVIEW_BASE_URL")
+var discordToken = mustGetEnvString("DISCORD_TOKEN")
+var previewDir = mustGetEnvString("PREVIEW_DIR")
+var previewBaseUrl = mustGetEnvString("PREVIEW_BASE_URL")
 
 var linkMatch = regexp.MustCompile(`https://\S+`)
 
