@@ -772,7 +772,7 @@ func ssvid(u string) (path string, err error) {
 		return "", fmt.Errorf("no videos in response")
 	}
 
-	filename := filepath.Join(previewBaseUrl, sha7(u))
+	filename := filepath.Join(previewDir, sha7(u))
 	return download(ssvidResp.Data.Links.Video[0].URL, filename)
 }
 
