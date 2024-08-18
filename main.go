@@ -40,8 +40,8 @@ var history = make(map[string]string)
 var inFlightMessages = make(map[string]*discordgo.Message)
 var channelLastMessage = make(map[string]string)
 
-var cobaltEndpoint = "https://co.wuk.sh/api/json"    // https://github.com/wukko/cobalt
-var spvEndpoint = "https://spv.ncp.nathanferns.xyz/" // https://github.com/nathanielfernandes/spv
+var cobaltEndpoint = "https://api.cobalt.tools/api/json" // https://github.com/wukko/cobalt
+var spvEndpoint = "https://spv.ncp.nathanferns.xyz/"     // https://github.com/nathanielfernandes/spv
 
 type CobaltRequest struct {
 	Url             string `json:"url"`
