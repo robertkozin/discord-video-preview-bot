@@ -10,10 +10,10 @@ services:
       - dokploy-network
     labels:
       - "traefik.enable=true"
-      - "traefik.http.routers.web.rule=Host(`preview.rcp2.r9n.co`)"
-      - "traefik.http.routers.web.rule=entrypoints=websecure"
-      - "traefik.http.routers.web.tls.certResolver=letsencrypt"
-      - "traefik.http.routers.web.loadbalancer.server.port=80"
+      - "traefik.http.routers.discord-video-preview-bot-web.rule=Host(`preview.rcp2.r9n.co`)"
+      - "traefik.http.routers.discord-video-preview-bot-web.entrypoints=websecure"
+      - "traefik.http.routers.discord-video-preview-bot-web.tls.certResolver=letsencrypt"
+      - "traefik.http.routers.discord-video-preview-bot-web.loadbalancer.server.port=80"
   bot:
     build: .
     restart: on-failure:3
