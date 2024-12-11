@@ -49,8 +49,14 @@ type CobaltRequest struct {
 }
 
 type CobaltResponse struct {
-	Status      string `json:"status"` // error / redirect / stream / success / rate-limit / picker
-	Text        string `json:"text"`
+	Status string `json:"status"` // error / redirect / stream / success / rate-limit / picker
+	Error  struct {
+		Code    string `json:"code"`
+		Context struct {
+			Service string `json:"service"`
+			Limit   int    `json:"limit"`
+		} `json:"context"`
+	} `json:"error"`
 	OriginalUrl string
 	Url         string         `json:"url"`
 	PickerType  string         `json:"pickerType"` // various / images
@@ -156,7 +162,8 @@ func replaceUrls(in string) string {
 	return matchUrl.ReplaceAllString(in, `<$0>`)
 }
 
-var downloaders = []func(string) (string, error){ssvid, cobalt, spotify}
+// var downloaders = []func(string) (string, error){ssvid, cobalt, spotify}
+var downloaders = []func(string) (string, error){cobalt}
 
 func messageCreate(s *discordgo.Session, m *discordgo.MessageCreate) {
 	channelLastMessage[m.ChannelID] = m.ID
@@ -288,7 +295,7 @@ func cobalt(url string) (path string, err error) {
 	case "picker":
 		return downloadPicker(&res, filename)
 	case "error":
-		return "", errors.New(res.Text)
+		return "", errors.New(res.Error.Code)
 	default:
 		return "", fmt.Errorf("status not supported %v", res.Status)
 	}
