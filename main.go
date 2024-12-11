@@ -162,7 +162,7 @@ func replaceUrls(in string) string {
 }
 
 // var downloaders = []func(string) (string, error){ssvid, cobalt, spotify}
-var downloaders = []func(string) (string, error){cobalt}
+var downloaders = []func(string) (string, error){cobalt, ssvid}
 
 func messageCreate(s *discordgo.Session, m *discordgo.MessageCreate) {
 	channelLastMessage[m.ChannelID] = m.ID
