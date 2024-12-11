@@ -282,7 +282,7 @@ func cobalt(url string) (path string, err error) {
 	case "redirect":
 		filename = filepath.Join(previewDir, filename)
 		return download(res.Url, filename)
-	case "stream":
+	case "tunnel":
 		filename = filepath.Join(previewDir, filename)
 		return download(res.Url, filename)
 	case "picker":
