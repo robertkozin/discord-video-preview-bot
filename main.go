@@ -44,8 +44,7 @@ var cobaltEndpoint = "http://cobalt-api:9000/"       // https://github.com/wukko
 var spvEndpoint = "https://spv.ncp.nathanferns.xyz/" // https://github.com/nathanielfernandes/spv
 
 type CobaltRequest struct {
-	Url             string `json:"url"`
-	IsNoTTWatermark bool   `json:"isNoTTWatermark"`
+	Url string `json:"url"`
 }
 
 type CobaltResponse struct {
