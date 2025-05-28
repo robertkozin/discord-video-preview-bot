@@ -1,4 +1,4 @@
-module preview-bot
+module github.com/robertkozin/discord-video-preview-bot
 
 go 1.24
 

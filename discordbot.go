@@ -3,10 +3,10 @@ package main
 import (
 	"fmt"
 	"github.com/bwmarrin/discordgo"
+	"github.com/robertkozin/discord-video-preview-bot/downloader"
 	"log/slog"
 	urlpkg "net/url"
 	"path/filepath"
-	"preview-bot/downloader"
 	"regexp"
 	"time"
 )

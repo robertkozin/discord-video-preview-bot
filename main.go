@@ -8,6 +8,7 @@ import (
 	"github.com/caarlos0/env/v11"
 	"github.com/getsentry/sentry-go"
 	sentryslog "github.com/getsentry/sentry-go/slog"
+	"github.com/robertkozin/discord-video-preview-bot/downloader"
 	slogmulti "github.com/samber/slog-multi"
 	"io/fs"
 	"io/ioutil"
@@ -80,14 +81,11 @@ func run(ctx context.Context, cfg RunCfg) error {
 	mime.AddExtensionType(".wav", "audio/wav")
 	mime.AddExtensionType(".ogg", "audio/ogg")
 
-	dl := &DownloaderRegistry{}
-	dl.Add(&CobaltDownloader{
+	dl := &downloader.DownloaderRegistry{}
+	dl.Add(&downloader.CobaltDownloader{
 		Dir:      cfg.StaticDir,
 		Endpoint: cfg.CobaltEndpoint,
 		APIKey:   cfg.CobaltAPIKey,
-	})
-	dl.Add(&SsvidDownloader{
-		Dir: cfg.StaticDir,
 	})
 
 	bot := &Bot{
