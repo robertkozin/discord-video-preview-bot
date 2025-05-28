@@ -3,12 +3,11 @@ package main
 import (
 	"fmt"
 	"github.com/bwmarrin/discordgo"
-	"github.com/tidwall/match"
 	"log/slog"
 	urlpkg "net/url"
 	"path/filepath"
+	"preview-bot/downloader"
 	"regexp"
-	"strings"
 	"time"
 )
 
@@ -26,7 +25,7 @@ type Bot struct {
 	inFlightMessages map[string]chan *discordgo.Message
 
 	PublicURL   string
-	Downloaders *DownloaderRegistry
+	Downloaders *downloader.DownloaderRegistry
 }
 
 func (b *Bot) Start(token string) error {
@@ -201,15 +200,4 @@ func cleanURLParams(rawURL string, allowList map[string][]string) (string, error
 	url.RawQuery = newv.Encode()
 	url.Fragment = ""
 	return url.String(), nil
-}
-
-func simpleURLMatch(url string, patterns []string) bool {
-	url = strings.TrimPrefix(url, "https://")
-	url = strings.TrimPrefix(url, "www.")
-	for _, p := range patterns {
-		if ok := match.Match(url, p); ok {
-			return true
-		}
-	}
-	return false
 }

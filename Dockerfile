@@ -7,6 +7,7 @@ RUN go mod download
 
 COPY ./web ./web
 COPY *.go ./
+COPY downloader/*.go ./downloader
 
 RUN CGO_ENABLED=0 go build -o main
 
