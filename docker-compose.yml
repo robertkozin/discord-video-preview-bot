@@ -1,36 +1,41 @@
+name: discord-video-preview
+
 services:
-  web:
-    image: nginx
-    restart: unless-stopped
-    ports:
-      - "80"
-    volumes:
-      - preview:/usr/share/nginx/html:ro
-    networks:
-      - dokploy-network
-  bot:
+  server:
     build: .
-    restart: on-failure:3
-    environment:
-      PREVIEW_DIR: /preview
-      PREVIEW_BASE_URL: "https://preview.rcp2.r9n.co/"
-      DISCORD_TOKEN: ${DISCORD_TOKEN}
-    depends_on:
-      - cobalt-api
+    develop:
+      watch:
+        - action: rebuild
+          path: .
+
+  rclone_webdav:
+    image: rclone/rclone:latest
     volumes:
-      - preview:/preview
-  cobalt-api:
-    image: ghcr.io/imputnet/cobalt:10
-    #read_only: true
-    restart: on-failure:3
-    expose:
-      - "9000"
+      - ./rclone.conf:/config/rclone/rclone.conf:ro
+      - ./_data/rclone_cache:/cache
+      - ./_data/rclone_data:/data
+    command: >
+      serve webdav someremote:/data
+      --vfs-cache-mode full
+      --cache-dir /cache
+      --vfs-fast-fingerprint
+      --vfs-cache-max-size 1G
+      --fast-list
+      --addr 0.0.0.0:8080
+    ports:
+      - "8080:8080"
+
+  cobalt:
+    image: ghcr.io/imputnet/cobalt:11
+    init: true
+    read_only: true
+    ports:
+      - "9000:9000"
     environment:
-      API_URL: "http://cobalt-api:9000/"
+      API_URL: "http://localhost:9000/"
 
-volumes:
-  preview:
-
-networks:
-  dokploy-network:
-    external: true
+  traces:
+    image: ghcr.io/ctrlspice/otel-desktop-viewer:latest-arm64
+    ports:
+      - "8005:8000"
+      - "4317:4317"
