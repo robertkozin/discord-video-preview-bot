@@ -3,7 +3,6 @@ package bot
 import (
 	"context"
 	"fmt"
-	"log/slog"
 	"regexp"
 	"strings"
 	"time"
@@ -106,7 +105,8 @@ func (b *Discord) replyToMessage(ctx context.Context, s *discordgo.Session, m *d
 
 	_, err = s.ChannelMessageSendComplex(m.ChannelID, reply)
 	if err != nil {
-		slog.Error("channel send message", "channel_id", m.ChannelID, "reply", reply, "url", url, "err", err)
+		span.RecordError(err)
+		span.SetStatus(1, err.Error())
 	}
 }
 
@@ -182,7 +182,7 @@ func (b *Discord) HideEmbeds(channelID, msgID string) {
 
 func formatEmbedAsText(embed *discordgo.MessageEmbed) string {
 	if embed == nil {
-		return ""
+		return "."
 	}
 
 	var (
@@ -215,7 +215,7 @@ func formatEmbedAsText(embed *discordgo.MessageEmbed) string {
 		return desc
 	}
 
-	return ""
+	return "."
 }
 
 var _urlPattern = regexp.MustCompile(`https?://\S+`)
