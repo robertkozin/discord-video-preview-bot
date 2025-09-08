@@ -27,7 +27,7 @@ func init() {
 
 	httpClient = &http.Client{
 		Transport: http.DefaultTransport,
-		Timeout:   10 * time.Second,
+		Timeout:   30 * time.Second,
 		Jar:       cookieJar,
 	}
 }
