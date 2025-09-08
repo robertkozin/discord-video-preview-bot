@@ -9,6 +9,8 @@ import (
 
 	"github.com/robertkozin/discord-video-preview-bot/preview"
 	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/trace"
 
 	"github.com/bwmarrin/discordgo"
 )
@@ -82,10 +84,15 @@ func (b *Discord) messageCreateHandler(s *discordgo.Session, m *discordgo.Messag
 }
 
 func (b *Discord) replyToMessage(ctx context.Context, s *discordgo.Session, m *discordgo.MessageCreate, url string) {
-	ctx, span := tracer.Start(ctx, "discord_reply")
+	ctx, span := tracer.Start(ctx, "discord_reply", trace.WithAttributes(
+		attribute.String("guild_id", m.GuildID),
+		attribute.String("channel_id", m.ChannelID),
+		attribute.String("message_id", m.ID),
+		attribute.String("author_username", m.Author.Username),
+	))
 	defer span.End()
 
-	embedCh := b.waitForEmbed(m)
+	embedCh := b.waitForEmbed(ctx, m)
 
 	hostedURLs, err := b.Reuploader.Reupload(ctx, url)
 	if err != nil {
@@ -110,7 +117,7 @@ func (b *Discord) replyToMessage(ctx context.Context, s *discordgo.Session, m *d
 	}
 }
 
-func (b *Discord) waitForEmbed(mc *discordgo.MessageCreate) <-chan *discordgo.MessageEmbed {
+func (b *Discord) waitForEmbed(ctx context.Context, mc *discordgo.MessageCreate) <-chan *discordgo.MessageEmbed {
 	ret := make(chan *discordgo.MessageEmbed, 1)
 
 	if len(mc.Embeds) > 0 {
@@ -120,8 +127,11 @@ func (b *Discord) waitForEmbed(mc *discordgo.MessageCreate) <-chan *discordgo.Me
 	}
 
 	go func() {
+		ctx, span := tracer.Start(ctx, "wait_for_embed")
+		defer span.End()
+
 		defer close(ret)
-		ctx, cancel := context.WithTimeout(context.Background(), time.Second*3)
+		ctx, cancel := context.WithTimeout(ctx, time.Second*3)
 		defer cancel()
 		removeHandler := b.session.AddHandler(func(s *discordgo.Session, mu *discordgo.MessageUpdate) {
 			if mu.ID != mc.ID || len(mu.Embeds) == 0 {
