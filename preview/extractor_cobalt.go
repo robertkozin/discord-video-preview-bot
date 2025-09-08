@@ -63,7 +63,7 @@ type CobaltError struct {
 	Status string `json:"status"`
 	Err    struct {
 		Code string `json:"code"`
-	}
+	} `json:"error"`
 }
 
 func (ce CobaltError) Error() string {

@@ -137,7 +137,7 @@ func JSONRequest[V any, E error](ctx context.Context, method, url string, body a
 		if err := json.Unmarshal(respBody, &errorJSON); err != nil {
 			return resp, nil, fmt.Errorf("parsing error body: %s: %w", resp.Status, err)
 		}
-		return resp, nil, errorJSON
+		return resp, nil, errorJSON // TODO: wrap with error code?
 	}
 
 	var valueJSON V
