@@ -32,7 +32,7 @@ services:
     ports:
       - "9000:9000"
     environment:
-      API_URL: "http://localhost:9000/"
+      API_URL: "http://cobalt:9000/"
 
   traces:
     image: ghcr.io/ctrlspice/otel-desktop-viewer:latest-arm64

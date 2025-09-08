@@ -9,11 +9,13 @@ import (
 	"time"
 
 	"github.com/robertkozin/discord-video-preview-bot/preview"
+	"go.opentelemetry.io/otel"
 
 	"github.com/bwmarrin/discordgo"
 )
 
 var (
+	tracer     = otel.Tracer("bot")
 	urlPattern = regexp.MustCompile(`https://\S+`)
 )
 
@@ -81,10 +83,15 @@ func (b *Discord) messageCreateHandler(s *discordgo.Session, m *discordgo.Messag
 }
 
 func (b *Discord) replyToMessage(ctx context.Context, s *discordgo.Session, m *discordgo.MessageCreate, url string) {
+	ctx, span := tracer.Start(ctx, "discord_reply")
+	defer span.End()
+
 	embedCh := b.waitForEmbed(m)
 
 	hostedURLs, err := b.Reuploader.Reupload(ctx, url)
 	if err != nil {
+		span.RecordError(err)
+		span.SetStatus(1, err.Error())
 		return
 	}
 
