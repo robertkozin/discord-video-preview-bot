@@ -92,12 +92,13 @@ func initTracer(serviceName string) (trace.TracerProvider, error) {
 	return tp, nil
 }
 
-func parseOtelEnvHeaders(fromEnv string) (headers map[string]string) {
+func parseOtelEnvHeaders(fromEnv string) map[string]string {
+	headers := map[string]string{}
 	for _, pair := range strings.Split(fromEnv, ",") {
 		key, val, _ := strings.Cut(pair, "=")
 		headers[key] = val
 	}
-	return
+	return headers
 }
 
 func isLoopbackAddress(endpoint string) (bool, error) {
