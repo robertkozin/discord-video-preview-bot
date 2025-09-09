@@ -181,7 +181,10 @@ func respReadAll(ctx context.Context, resp *http.Response) ([]byte, error) {
 	if resp.ContentLength > 0 {
 		buf := make([]byte, resp.ContentLength)
 		_, err := io.ReadFull(resp.Body, buf)
-		return buf, fmt.Errorf("reading full response body: %w", err)
+		if err != nil {
+			return nil, fmt.Errorf("reading full response body: %w", err)
+		}
+		return buf, nil
 	}
 
 	return nil, nil
