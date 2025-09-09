@@ -14,6 +14,9 @@ import (
 	"time"
 
 	"github.com/tidwall/match"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
+	"go.opentelemetry.io/otel/trace"
 )
 
 var (
@@ -38,10 +41,28 @@ func httpGet(ctx context.Context, url string) (*http.Response, error) {
 }
 
 func httpDo(req *http.Request) (*http.Response, error) {
+	_, span := tracer.Start(req.Context(), "http_do", trace.WithAttributes(
+		attribute.String("url", req.URL.String()),
+		attribute.String("method", req.Method),
+	))
+	defer span.End()
+
 	if req.Header.Get("User-Agent") == "" {
 		req.Header.Set("User-Agent", userAgent)
 	}
-	return httpClient.Do(req)
+	resp, err := httpClient.Do(req)
+	if err != nil {
+		span.SetStatus(codes.Error, err.Error())
+		span.RecordError(err)
+	} else {
+		span.SetStatus(codes.Ok, resp.Status)
+		span.SetAttributes(
+			attribute.Int64("content_length", resp.ContentLength),
+			attribute.String("content_type", resp.Header.Get("Content-Type")),
+		)
+	}
+
+	return resp, err
 }
 
 func getResponseExtension(resp *http.Response) string {
@@ -98,6 +119,9 @@ func validateSimpleFilename(filename string) error {
 }
 
 func JSONRequest[V any, E error](ctx context.Context, method, url string, body any, headers ...string) (*http.Response, *V, error) {
+	ctx, span := tracer.Start(ctx, "json_request")
+	defer span.End()
+
 	var reqBody io.Reader
 	if body != nil {
 		jsonData, err := json.Marshal(body)
@@ -145,4 +169,20 @@ func JSONRequest[V any, E error](ctx context.Context, method, url string, body a
 		return resp, nil, fmt.Errorf("parsing response: %s: %w", resp.Status, err)
 	}
 	return resp, &valueJSON, nil
+}
+
+func respReadAll(ctx context.Context, resp *http.Response) ([]byte, error) {
+	_, span := tracer.Start(ctx, "resp_read_all", trace.WithAttributes(
+		attribute.Int64("content_length", resp.ContentLength),
+	))
+	defer span.End()
+	defer resp.Body.Close()
+
+	if resp.ContentLength > 0 {
+		buf := make([]byte, resp.ContentLength)
+		_, err := io.ReadFull(resp.Body, buf)
+		return buf, fmt.Errorf("reading full response body: %w", err)
+	}
+
+	return nil, nil
 }

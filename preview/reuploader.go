@@ -7,7 +7,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"io/fs"
 	"net/http"
 	"net/url"
@@ -68,7 +67,7 @@ func (reup *Reuploader) Reupload(ctx context.Context, mediaURL string) ([]string
 		return nil, fmt.Errorf("extracting: %w", err)
 	}
 
-	filenames, err := reup.reupload(ctx, remoteURLs, mediaID)
+	filenames, err := reup.transferMany(ctx, remoteURLs, mediaID)
 	if err != nil {
 		return nil, fmt.Errorf("reuploading: %w", err)
 	}
@@ -110,15 +109,15 @@ func (reup *Reuploader) extract(ctx context.Context, mediaURL string) ([]string,
 	return nil, fmt.Errorf("extracting media: %s: %w", mediaURL, errors.Join(errs...))
 }
 
-func (reup *Reuploader) reupload(ctx context.Context, remoteURLs []string, mediaID string) ([]string, error) {
-	ctx, span := tracer.Start(ctx, "transfer")
+func (reup *Reuploader) transferMany(ctx context.Context, remoteURLs []string, mediaID string) ([]string, error) {
+	ctx, span := tracer.Start(ctx, "transfer_many")
 	defer span.End()
 
 	if len(remoteURLs) == 1 {
 		name := mediaID
 		filename, err := reup.transfer(ctx, remoteURLs[0], name)
 		if err != nil {
-			return nil, fmt.Errorf("transfering: %w", err)
+			return nil, fmt.Errorf("transfering from %s: %w", remoteURLs[0], err)
 		}
 		return []string{filename}, nil
 	}
@@ -137,6 +136,9 @@ func (reup *Reuploader) reupload(ctx context.Context, remoteURLs []string, media
 }
 
 func (reup *Reuploader) transfer(ctx context.Context, remoteURL string, name string) (string, error) {
+	ctx, span := tracer.Start(ctx, "transfer_one")
+	defer span.End()
+
 	resp, err := httpGet(ctx, remoteURL)
 	if err != nil {
 		return "", fmt.Errorf("fetching remote url: %w", err)
@@ -144,16 +146,18 @@ func (reup *Reuploader) transfer(ctx context.Context, remoteURL string, name str
 	defer resp.Body.Close()
 
 	if resp.StatusCode != 200 {
-		return "", errors.New(resp.Status)
+		return "", fmt.Errorf("unexpected error fetching remote url: %s", resp.Status)
 	}
 
 	if resp.ContentLength > MaxMediaSize {
-		return "", errors.New("max size reached")
+		return "", fmt.Errorf("remote media is too large: %dbytes", resp.ContentLength)
 	}
 
-	body, err := io.ReadAll(resp.Body)
+	body, err := respReadAll(ctx, resp)
 	if err != nil {
-		return "", fmt.Errorf("downloading body to memory: %w", err)
+		return "", fmt.Errorf("downloading media to memory: %w", err)
+	} else if body == nil || len(body) == 0 {
+		return "", fmt.Errorf("expecting media response body to not be emptys")
 	}
 
 	contentType := http.DetectContentType(body)
@@ -174,6 +178,9 @@ func (reup *Reuploader) transfer(ctx context.Context, remoteURL string, name str
 }
 
 func (reup *Reuploader) getManifest(ctx context.Context, mediaID string) (Manifest, error) {
+	ctx, span := tracer.Start(ctx, "get_manifest")
+	defer span.End()
+
 	name := mediaID + ".json"
 	manifestBytes, err := reup.Destination.Download(ctx, name)
 	if err != nil {
@@ -188,6 +195,9 @@ func (reup *Reuploader) getManifest(ctx context.Context, mediaID string) (Manife
 }
 
 func (reup *Reuploader) uploadManifest(ctx context.Context, mediaID string, manifest Manifest) error {
+	ctx, span := tracer.Start(ctx, "upload_manifest")
+	defer span.End()
+
 	b, err := json.MarshalIndent(manifest, "", "  ")
 	if err != nil {
 		return fmt.Errorf("marshalling manifest: %w", err)

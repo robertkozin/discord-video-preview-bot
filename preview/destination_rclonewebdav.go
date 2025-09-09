@@ -35,6 +35,9 @@ func (r *RCloneWebDAVDestination) Close() error {
 }
 
 func (r *RCloneWebDAVDestination) Download(ctx context.Context, name string) ([]byte, error) {
+	ctx, span := tracer.Start(ctx, "rclone+webdav_download")
+	defer span.End()
+
 	if err := validateSimpleFilename(name); err != nil {
 		return nil, err
 	}
@@ -71,6 +74,9 @@ func (r *RCloneWebDAVDestination) Download(ctx context.Context, name string) ([]
 }
 
 func (r *RCloneWebDAVDestination) Upload(ctx context.Context, name string, content []byte) error {
+	ctx, span := tracer.Start(ctx, "rclone+webdav_upload")
+	defer span.End()
+
 	if err := validateSimpleFilename(name); err != nil {
 		return err
 	}

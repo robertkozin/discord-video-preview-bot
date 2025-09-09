@@ -87,6 +87,8 @@ func (c *CobaltExtractor) Extract(ctx context.Context, url string) ([]string, er
 		req     = CobaltRequest{Url: url}
 		headers []string
 	)
+	ctx, span := tracer.Start(ctx, "cobalt_extract")
+	defer span.End()
 
 	if c.APIKey != "" {
 		headers = []string{"Authorization", "Api-Key " + c.APIKey}
