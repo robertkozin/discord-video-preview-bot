@@ -139,7 +139,8 @@ func (reup *Reuploader) transfer(ctx context.Context, remoteURL string, name str
 	ctx, span := tracer.Start(ctx, "transfer_one")
 	defer span.End()
 
-	resp, err := httpGet(ctx, remoteURL)
+	// resp, err := httpGet(ctx, remoteURL)
+	resp, err := http.Get(remoteURL)
 	if err != nil {
 		return "", fmt.Errorf("fetching remote url: %w", err)
 	}
