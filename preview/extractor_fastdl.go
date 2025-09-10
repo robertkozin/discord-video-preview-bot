@@ -29,7 +29,7 @@ func (fdl *FastDLExtractor) IsSupported(mediaURL string) bool {
 }
 
 type VidProxyRequest struct {
-	Url string `json:"url"`
+	Target string `json:"target"`
 }
 
 type VidProxyResponse struct {
