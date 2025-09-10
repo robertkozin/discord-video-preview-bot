@@ -14,6 +14,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/robertkozin/discord-video-preview-bot/tr"
 	"go.opentelemetry.io/otel/attribute"
 )
 
@@ -39,8 +40,9 @@ func (reup *Reuploader) IsSupported(mediaURL string) bool {
 }
 
 func (reup *Reuploader) Reupload(ctx context.Context, mediaURL string) ([]string, error) {
+	var err error
 	ctx, span := tracer.Start(ctx, "reupload")
-	defer span.End()
+	defer tr.End(span, &err)
 
 	cleanURL, err := cleanURLParams(mediaURL, allowedParams)
 	if err != nil {
@@ -86,14 +88,14 @@ func (reup *Reuploader) Reupload(ctx context.Context, mediaURL string) ([]string
 	return permalinks, nil
 }
 
-func (reup *Reuploader) extract(ctx context.Context, mediaURL string) ([]string, error) {
+func (reup *Reuploader) extract(ctx context.Context, mediaURL string) (remoteURLs []string, err error) {
 	ctx, span := tracer.Start(ctx, "extract")
-	defer span.End()
+	defer tr.End(span, &err)
 
 	errs := []error{}
 	for _, extractor := range reup.Extractors {
 		if extractor.IsSupported(mediaURL) {
-			remoteURLs, err := extractor.Extract(ctx, mediaURL)
+			remoteURLs, err = extractor.Extract(ctx, mediaURL)
 			if err != nil {
 				errs = append(errs, err)
 				continue
