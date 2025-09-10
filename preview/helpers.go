@@ -57,8 +57,11 @@ func httpDo(req *http.Request) (*http.Response, error) {
 	} else {
 		span.SetStatus(codes.Ok, resp.Status)
 		span.SetAttributes(
+			attribute.String("status", resp.Status),
+			attribute.Int("status_code", resp.StatusCode),
 			attribute.Int64("content_length", resp.ContentLength),
 			attribute.String("content_type", resp.Header.Get("Content-Type")),
+			attribute.String("user_agent", resp.Request.UserAgent()),
 		)
 	}
 
@@ -145,7 +148,7 @@ func JSONRequest[V any, E error](ctx context.Context, method, url string, body a
 		}
 	}
 
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := httpDo(req)
 	if err != nil {
 		return nil, nil, fmt.Errorf("sending http request: %w", err)
 	}

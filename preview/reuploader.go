@@ -7,7 +7,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"io/fs"
 	"net/http"
 	"net/url"
@@ -140,16 +139,14 @@ func (reup *Reuploader) transfer(ctx context.Context, remoteURL string, name str
 	ctx, span := tracer.Start(ctx, "transfer_one")
 	defer span.End()
 
-	// resp, err := httpGet(ctx, remoteURL)
-	resp, err := http.Get(remoteURL)
+	resp, err := httpGet(ctx, remoteURL)
 	if err != nil {
 		return "", fmt.Errorf("fetching remote url: %w", err)
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != 200 {
-		body, _ := io.ReadAll(resp.Body)
-		return "", fmt.Errorf("unexpected error fetching remote url: %s: %s", resp.Status, string(body[:min(60, len(body))]))
+		return "", fmt.Errorf("unexpected error fetching remote url: %s", resp.Status)
 	}
 
 	if resp.ContentLength > MaxMediaSize {

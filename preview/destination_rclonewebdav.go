@@ -44,8 +44,7 @@ func (r *RCloneWebDAVDestination) Download(ctx context.Context, name string) ([]
 
 	fileURL := urlCat(r.baseURL, name)
 
-	// resp, err := httpGet(ctx, fileURL)
-	resp, err := http.Get(fileURL)
+	resp, err := httpGet(ctx, fileURL)
 	if err != nil {
 		return nil, fmt.Errorf("downloading file from rclone+webdav: %w", err)
 	}
@@ -90,8 +89,7 @@ func (r *RCloneWebDAVDestination) Upload(ctx context.Context, name string, conte
 	}
 	req.ContentLength = int64(len(content))
 
-	//resp, err := httpDo(req)
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := httpDo(req)
 	if err != nil {
 		return fmt.Errorf("uploading file to rclone+webdav: %w", err)
 	}
