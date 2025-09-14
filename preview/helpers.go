@@ -134,7 +134,7 @@ func JSONRequest[V any, E error](ctx context.Context, method, url string, body a
 		reqBody = bytes.NewReader(jsonData)
 	}
 
-	req, err := http.NewRequest(method, url, reqBody)
+	req, err := http.NewRequestWithContext(ctx, method, url, reqBody)
 	if err != nil {
 		return nil, nil, fmt.Errorf("creating request: %w", err)
 	}

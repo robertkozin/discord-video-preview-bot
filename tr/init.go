@@ -126,7 +126,7 @@ func isLoopbackAddress(endpoint string) (bool, error) {
 
 	allAreLoopback := true
 	for _, ip := range ips {
-		if !ip.IsLoopback() {
+		if !ip.IsLoopback() && !ip.IsPrivate() {
 			allAreLoopback = false
 		}
 	}
