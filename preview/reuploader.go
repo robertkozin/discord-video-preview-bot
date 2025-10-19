@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"net/http"
 	"net/url"
@@ -155,11 +156,11 @@ func (reup *Reuploader) transfer(ctx context.Context, remoteURL string, name str
 		return "", fmt.Errorf("remote media is too large: %dbytes", resp.ContentLength)
 	}
 
-	body, err := respReadAll(ctx, resp)
+	body, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return "", fmt.Errorf("downloading media to memory: %w", err)
 	} else if body == nil || len(body) == 0 {
-		return "", fmt.Errorf("expecting media response body to not be emptys")
+		return "", fmt.Errorf("expecting media response body to not be empty")
 	}
 
 	contentType := http.DetectContentType(body)

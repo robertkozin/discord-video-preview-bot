@@ -173,22 +173,3 @@ func JSONRequest[V any, E error](ctx context.Context, method, url string, body a
 	}
 	return resp, &valueJSON, nil
 }
-
-func respReadAll(ctx context.Context, resp *http.Response) ([]byte, error) {
-	_, span := tracer.Start(ctx, "resp_read_all", trace.WithAttributes(
-		attribute.Int64("content_length", resp.ContentLength),
-	))
-	defer span.End()
-	defer resp.Body.Close()
-
-	if resp.ContentLength > 0 {
-		buf := make([]byte, resp.ContentLength)
-		_, err := io.ReadFull(resp.Body, buf)
-		if err != nil {
-			return nil, fmt.Errorf("reading full response body: %w", err)
-		}
-		return buf, nil
-	}
-
-	return nil, nil
-}
