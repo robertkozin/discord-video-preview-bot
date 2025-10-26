@@ -11,12 +11,13 @@ import (
 
 	"github.com/caarlos0/env/v11"
 	"github.com/robertkozin/discord-video-preview-bot/bot"
+	"github.com/robertkozin/discord-video-preview-bot/browser"
 	"github.com/robertkozin/discord-video-preview-bot/preview"
 	"github.com/robertkozin/discord-video-preview-bot/tr"
 )
 
 type Args struct {
-	Destination  *url.URL   `env:"DESTINATION" envDefault:"rclone+webdav://rclone_webdav:8080"`
+	Destination  *url.URL   `env:"DESTINATION" envDefault:"fs://_data/server/?server=localhost:8080"`
 	Extractors   []*url.URL `env:"EXTRACTORS" envDefault:"cobalt://localhost:9000?insecure=1"`
 	PublicURL    *url.URL   `env:"PUBLIC_URL" envDefault:"http://localhost:8080"`
 	DiscordToken string     `env:"DISCORD_TOKEN"`
@@ -67,6 +68,9 @@ func run(ctx context.Context, args Args) error {
 
 	defer tr.Shutdown()
 
+	stopBrowser := browser.Start()
+	defer stopBrowser()
+
 	extractors := make([]preview.Extractor, len(args.Extractors))
 	for i, ex := range args.Extractors {
 		extractors[i], err = preview.NewExtractor(ex)
@@ -74,6 +78,13 @@ func run(ctx context.Context, args Args) error {
 			return fmt.Errorf("creating extractor: %w", err)
 		}
 	}
+
+	extractors = append(extractors,
+		&preview.FastDLExtractor{},
+		&preview.SSSTikExtractor{},
+		&preview.ReelsVideoExtractor{},
+		&preview.SnapTokExtractor{},
+	)
 
 	dest, err := preview.NewDestination(ctx, args.Destination)
 	if err != nil {
@@ -104,6 +115,7 @@ func run(ctx context.Context, args Args) error {
 
 	fmt.Println("running!")
 	<-ctx.Done()
+	fmt.Println("done!")
 
 	return nil
 }

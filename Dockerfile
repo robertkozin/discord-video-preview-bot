@@ -14,9 +14,10 @@ RUN --mount=type=cache,target=/go/pkg/mod/ \
     --mount=type=bind,target=. \
     CGO_ENABLED=0 go build -o /app/main
 
+FROM zenika/alpine-chrome:latest
+
 WORKDIR /app
 
-EXPOSE 8080
-EXPOSE 8081
+COPY --from=builder /app/main .
 
 CMD ["./main"]

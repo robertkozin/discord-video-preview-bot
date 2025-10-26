@@ -24,6 +24,10 @@ func NewFSDestination(ctx context.Context, config *url.URL) (*FSDestination, err
 	dest := FSDestination{}
 	var err error
 
+	err = os.MkdirAll(path, os.ModePerm)
+	if err != nil {
+		return nil, fmt.Errorf("making fs dir: %w", err)
+	}
 	dest.root, err = os.OpenRoot(path)
 	if err != nil {
 		return nil, fmt.Errorf("opening root: %w", err)
