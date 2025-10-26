@@ -18,8 +18,14 @@ func Start() (stop func() error) {
 	if !found {
 		panic("no browser found")
 	}
-	debugURL := launcher.New().Bin(path).MustLaunch()
-	browser = rod.New().ControlURL(debugURL).MustConnect()
+	u := launcher.New().
+		Bin(path).
+		NoSandbox(true).
+		Headless(true).
+		Set("disable-gpu").
+		MustLaunch()
+
+	browser = rod.New().ControlURL(u).MustConnect()
 	return browser.Close
 }
 
