@@ -2,6 +2,7 @@ package browser
 
 import (
 	"fmt"
+	"os"
 	"runtime/debug"
 	"slices"
 	"strings"
@@ -14,18 +15,20 @@ import (
 var browser *rod.Browser
 
 func Start() (stop func() error) {
-	path, found := launcher.LookPath()
-	if !found {
-		panic("no browser found")
+	if rodURL := os.Getenv("ROD_URL"); rodURL != "" {
+		l := launcher.MustNewManaged(rodURL)
+		browser = rod.New().Client(l.MustClient()).MustConnect()
+	} else {
+		path, found := launcher.LookPath()
+		if !found {
+			panic("no browser found")
+		}
+		u := launcher.New().
+			Bin(path).
+			MustLaunch()
+		browser = rod.New().ControlURL(u).MustConnect()
 	}
-	u := launcher.New().
-		Bin(path).
-		NoSandbox(true).
-		Headless(true).
-		Set("disable-gpu").
-		MustLaunch()
 
-	browser = rod.New().ControlURL(u).MustConnect()
 	return browser.Close
 }
 
