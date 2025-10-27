@@ -2,6 +2,7 @@ package preview
 
 import (
 	"context"
+	"time"
 
 	"github.com/go-rod/rod"
 	"github.com/go-rod/rod/lib/input"
@@ -25,6 +26,7 @@ func (ex *ReelsVideoExtractor) Extract(ctx context.Context, mediaURL string) ([]
 	defer span.End()
 
 	remoteURL, err := browser.TryChan(func(page *rod.Page, ret chan string) {
+		page = page.Timeout(15 * time.Second)
 		ex.extract(page, mediaURL, ret)
 	})
 	return []string{remoteURL}, err

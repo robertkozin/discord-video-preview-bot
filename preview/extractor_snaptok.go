@@ -2,6 +2,7 @@ package preview
 
 import (
 	"context"
+	"time"
 
 	"github.com/go-rod/rod"
 	"github.com/go-rod/rod/lib/input"
@@ -16,7 +17,7 @@ func (ex *SnapTokExtractor) IsSupported(mediaURL string) bool {
 	return simpleURLMatch(mediaURL, []string{
 		"tiktok.com/t/*",
 		"tiktok.com/@*/video/*",
-		"vm.tiktok.com/*",
+		"*.tiktok.com/*",
 	})
 }
 
@@ -25,6 +26,7 @@ func (ex *SnapTokExtractor) Extract(ctx context.Context, mediaURL string) ([]str
 	defer span.End()
 
 	remoteURL, err := browser.TryChan(func(page *rod.Page, ret chan string) {
+		page = page.Timeout(15 * time.Second)
 		ex.extract(page, mediaURL, ret)
 	})
 	return []string{remoteURL}, err

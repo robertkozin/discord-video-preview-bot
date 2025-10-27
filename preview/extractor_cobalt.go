@@ -41,7 +41,7 @@ func (c *CobaltExtractor) IsSupported(url string) bool {
 		"instagram.com/reel/*",
 		"tiktok.com/t/*",
 		"tiktok.com/@*/video/*",
-		"vm.tiktok.com/*",
+		"*.tiktok.com/*",
 		"twitter.com/*/status/*",
 		"t.co/*",
 		"x.com/*/status/*",
@@ -82,7 +82,7 @@ type CobaltPicker struct {
 	Url  string `json:"url"`
 }
 
-func (c *CobaltExtractor) Extract(ctx context.Context, url string) ([]string, error) {
+func (ex *CobaltExtractor) Extract(ctx context.Context, url string) ([]string, error) {
 	var (
 		req     = CobaltRequest{Url: url}
 		headers []string
@@ -90,11 +90,11 @@ func (c *CobaltExtractor) Extract(ctx context.Context, url string) ([]string, er
 	ctx, span := tracer.Start(ctx, "cobalt_extract")
 	defer span.End()
 
-	if c.APIKey != "" {
-		headers = []string{"Authorization", "Api-Key " + c.APIKey}
+	if ex.APIKey != "" {
+		headers = []string{"Authorization", "Api-Key " + ex.APIKey}
 	}
 
-	_, value, err := JSONRequest[CobaltResponse, CobaltError](ctx, "POST", c.Endpoint, req, headers...)
+	_, value, err := JSONRequest[CobaltResponse, CobaltError](ctx, "POST", ex.Endpoint, req, headers...)
 	if err != nil {
 		return nil, fmt.Errorf("making cobalt request: %w", err)
 	}
