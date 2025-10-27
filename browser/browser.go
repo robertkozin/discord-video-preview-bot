@@ -112,11 +112,11 @@ func BlockThirdParty(page *rod.Page, firstPartyPattern string) {
 			proto.NetworkResourceTypeXHR,
 			proto.NetworkResourceTypeFetch,
 			proto.NetworkResourceTypeOther:
-			fmt.Println("CONTINUE", e.Request.Method, e.Request.URL, e.ResourceType)
+			//fmt.Println("CONTINUE", e.Request.Method, e.Request.URL, e.ResourceType)
 			_ = proto.FetchContinueRequest{RequestID: e.RequestID}.Call(page)
 			return false
 		default:
-			fmt.Println("BLOCK", e.Request.Method, e.Request.URL, e.ResourceType)
+			//fmt.Println("BLOCK", e.Request.Method, e.Request.URL, e.ResourceType)
 			_ = proto.FetchFailRequest{
 				RequestID:   e.RequestID,
 				ErrorReason: proto.NetworkErrorReasonBlockedByClient,
