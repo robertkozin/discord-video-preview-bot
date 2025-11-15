@@ -11,12 +11,14 @@ import (
 	"io/fs"
 	"net/http"
 	"net/url"
+	"os"
 	"slices"
 	"strings"
 	"time"
 
 	"github.com/robertkozin/discord-video-preview-bot/tr"
 	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/trace"
 )
 
 type Reuploader struct {
@@ -139,28 +141,12 @@ func (reup *Reuploader) transferMany(ctx context.Context, remoteURLs []string, m
 }
 
 func (reup *Reuploader) transfer(ctx context.Context, remoteURL string, name string) (string, error) {
-	ctx, span := tracer.Start(ctx, "transfer_one")
+	ctx, span := tracer.Start(ctx, "transfer_one", trace.WithAttributes(attribute.String("remote_url", remoteURL)))
 	defer span.End()
 
-	resp, err := httpGet(ctx, remoteURL)
-	if err != nil {
-		return "", fmt.Errorf("fetching remote url: %w", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != 200 {
-		return "", fmt.Errorf("unexpected error fetching remote url: %s", resp.Status)
-	}
-
-	if resp.ContentLength > MaxMediaSize {
-		return "", fmt.Errorf("remote media is too large: %dbytes", resp.ContentLength)
-	}
-
-	body, err := io.ReadAll(resp.Body)
+	body, err := download(ctx, remoteURL)
 	if err != nil {
 		return "", fmt.Errorf("downloading media to memory: %w", err)
-	} else if body == nil || len(body) == 0 {
-		return "", fmt.Errorf("expecting media response body to not be empty")
 	}
 
 	contentType := http.DetectContentType(body)
@@ -178,6 +164,71 @@ func (reup *Reuploader) transfer(ctx context.Context, remoteURL string, name str
 	}
 
 	return filename, nil
+}
+
+func download(ctx context.Context, remoteURL string) ([]byte, error) {
+	ctx, span := tracer.Start(ctx, "download")
+	defer span.End()
+
+	parsedURL, err := url.Parse(remoteURL)
+	if err != nil {
+		return nil, fmt.Errorf("parsing remote url: %w", err)
+	}
+
+	switch parsedURL.Scheme {
+	case "https":
+		return downloadHttp(ctx, remoteURL)
+	case "file":
+		return downloadFile(parsedURL.Path)
+	default:
+		return nil, fmt.Errorf("expecting https:// or file:// for remote media url: %s", parsedURL.String())
+	}
+}
+
+func downloadFile(path string) ([]byte, error) {
+	file, err := os.Open(path)
+	if err != nil {
+		return nil, fmt.Errorf("opening file: %w", err)
+	}
+	defer file.Close()
+
+	stat, err := file.Stat()
+	if err != nil {
+		return nil, fmt.Errorf("getting file info: %w", err)
+	}
+
+	return readAll(file, stat.Size())
+}
+
+func downloadHttp(ctx context.Context, remoteURL string) ([]byte, error) {
+	resp, err := httpGet(ctx, remoteURL)
+	if err != nil {
+		return nil, fmt.Errorf("fetching remote url: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != 200 {
+		return nil, fmt.Errorf("unexpected error fetching remote url: %s", resp.Status)
+	}
+
+	if resp.ContentLength > MaxMediaSize {
+		return nil, fmt.Errorf("remote media is too large: %d bytes", resp.ContentLength)
+	}
+
+	return readAll(resp.Body, resp.ContentLength)
+}
+
+func readAll(reader io.Reader, size int64) (body []byte, err error) {
+	if size > 0 {
+		body = make([]byte, 0, size)
+		_, err = io.ReadFull(reader, body)
+	} else if size < 0 {
+		body, err = io.ReadAll(reader)
+	} else {
+		err = fmt.Errorf("read all: expecting a non-zero size")
+	}
+
+	return body, err
 }
 
 func (reup *Reuploader) getManifest(ctx context.Context, mediaID string) (Manifest, error) {
