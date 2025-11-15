@@ -3,6 +3,8 @@ FROM golang:alpine AS builder
 WORKDIR /app
 WORKDIR /build
 
+RUN apk add --no-cache ffmpeg yt-dlp
+
 RUN --mount=type=cache,target=/go/pkg/mod/ \
     --mount=type=bind,source=go.sum,target=go.sum \
     --mount=type=bind,source=go.mod,target=go.mod \
