@@ -16,6 +16,7 @@ type ReelsVideoExtractor struct{}
 func (ex *ReelsVideoExtractor) IsSupported(mediaURL string) bool {
 	return simpleURLMatch(mediaURL, []string{
 		"instagram.com/reel/*",
+		"instagram.com/reels/*",
 		"instagram.com/p/*",
 		"instagram.com/story/*",
 	})

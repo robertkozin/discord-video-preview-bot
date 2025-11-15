@@ -16,6 +16,7 @@ type FastDLExtractor struct{}
 func (fdl *FastDLExtractor) IsSupported(mediaURL string) bool {
 	return simpleURLMatch(mediaURL, []string{
 		"instagram.com/reel/*",
+		"instagram.com/reels/*",
 		"instagram.com/p/*",
 		"instagram.com/story/*",
 	})
