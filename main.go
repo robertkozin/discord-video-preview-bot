@@ -110,7 +110,7 @@ func run(ctx context.Context, args Args) error {
 		defer bot.Close()
 	} else {
 		handler := bot.SimpleServer(&reuploader)
-		go http.ListenAndServe("localhost:8081", handler)
+		go http.ListenAndServe("0.0.0.0:8081", handler)
 	}
 
 	fmt.Println("running!")

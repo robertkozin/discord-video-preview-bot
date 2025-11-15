@@ -3,10 +3,24 @@ name: discord-video-preview
 services:
   server:
     build: .
+    environment:
+      PUBLIC_URL: "http://localhost:8080/"
+      DESTINATION: "rclone+webdav://rclone_webdav:8080"
+      EXTRACTORS: "cobalt://cobalt:9000/?insecure=1"
+      ROD_URL: "http://rod:7317"
+      OTEL_EXPORTER_OTLP_ENDPOINT: "traces:4317"
+    ports:
+      - "8081:8081" # debug ui
     develop:
       watch:
         - action: rebuild
           path: .
+
+  rod:
+    image: ghcr.io/go-rod/rod:latest
+    ports:
+      - "9222:9222"
+      - "7317:7317"
 
   rclone_webdav:
     image: rclone/rclone:latest

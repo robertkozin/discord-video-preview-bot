@@ -176,12 +176,12 @@ func download(ctx context.Context, remoteURL string) ([]byte, error) {
 	}
 
 	switch parsedURL.Scheme {
-	case "https":
+	case "https", "http":
 		return downloadHttp(ctx, remoteURL)
 	case "file":
 		return downloadFile(parsedURL.Path)
 	default:
-		return nil, fmt.Errorf("expecting https:// or file:// for remote media url: %s", parsedURL.String())
+		return nil, fmt.Errorf("expecting http(s):// or file:// for remote media url: %s", parsedURL.String())
 	}
 }
 
