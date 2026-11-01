@@ -41,6 +41,10 @@ func httpGet(ctx context.Context, url string) (*http.Response, error) {
 }
 
 func httpDo(req *http.Request) (*http.Response, error) {
+	return httpDoWith(httpClient, req)
+}
+
+func httpDoWith(client *http.Client, req *http.Request) (*http.Response, error) {
 	_, span := tracer.Start(req.Context(), "http_do", trace.WithAttributes(
 		attribute.String("url", req.URL.String()),
 		attribute.String("method", req.Method),
@@ -50,7 +54,7 @@ func httpDo(req *http.Request) (*http.Response, error) {
 	if req.Header.Get("User-Agent") == "" {
 		req.Header.Set("User-Agent", userAgent)
 	}
-	resp, err := httpClient.Do(req)
+	resp, err := client.Do(req)
 	if err != nil {
 		span.SetStatus(codes.Error, err.Error())
 		span.RecordError(err)
@@ -172,4 +176,17 @@ func JSONRequest[V any, E error](ctx context.Context, method, url string, body a
 		return resp, nil, fmt.Errorf("parsing response: %s: %w", resp.Status, err)
 	}
 	return resp, &valueJSON, nil
+}
+
+// detectContentType is http.DetectContentType, except it recognizes mp4s whose
+// ftyp box lacks an "mp4*" brand (e.g. X's "isom"/"iso4" files).
+func detectContentType(body []byte) string {
+	if len(body) >= 12 && string(body[4:8]) == "ftyp" {
+		switch string(body[8:12]) {
+		case "M4A ", "M4B ", "M4P ", "qt  ":
+		default:
+			return "video/mp4"
+		}
+	}
+	return http.DetectContentType(body)
 }

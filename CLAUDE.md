@@ -27,7 +27,7 @@ There are no tests in the repo yet.
 All backends are configured as URLs whose **scheme selects the implementation** and whose query string carries options:
 
 - `DESTINATION` — `fs://<path>?server=host:port` (local dir, optionally served over HTTP), `b2://...` (Backblaze B2), `rclone+webdav://host:port`. Dispatch in `preview.NewDestination`.
-- `EXTRACTORS` (comma-separated) and/or `EXTRACTOR_1`…`EXTRACTOR_10` — currently only `cobalt://host:port?insecure=1&key=...` (`insecure` → http instead of https). Dispatch in `preview.NewExtractor`.
+- `EXTRACTORS` (comma-separated) and/or `EXTRACTOR_1`…`EXTRACTOR_10` — `cobalt://host:port?insecure=1&key=...` (`insecure` → http instead of https) or `brightdata://?key=<api key>`. Dispatch in `preview.NewExtractor`.
 - `PUBLIC_URL` — base URL prepended to stored filenames to form the links posted to Discord.
 - `DISCORD_TOKEN` — enables bot mode.
 - `CDP_URL` — connect to a shared CDP endpoint such as browserless (`ws(s)://` or `http(s)://`, query like `?token=` preserved). Takes precedence over `ROD_URL`. Opens a new connection (= new browserless session) per page instead of holding one browser open.
@@ -53,7 +53,9 @@ Key points that span multiple files:
 - **Extractor order matters.** URL-configured extractors (cobalt) come first; the hardcoded browser-scraping fallbacks (`FastDL`, `SSSTik`, `ReelsVideo`) are appended in `main.go`. `Reuploader.extract` tries each supporting extractor in order and joins errors if all fail.
 - **URL matching** uses `simpleURLMatch` (`preview/helpers.go`): strips `https://` and `www.`, then glob-matches with `tidwall/match` patterns like `"instagram.com/reel/*"`.
 - **Browser-scraping extractors** drive a third-party download site via go-rod using the helpers in `browser/browser.go`: `browser.TryChan` gives a fresh page and converts rod's `Must*` panics into errors; `BlockThirdParty` blocks non-first-party and non-essential requests. Follow the existing extractors' shape (`page.Timeout`, `page.Race()` between success and error elements).
-- Extractors may return `file://` URLs (e.g. for locally produced files); the Docker image includes `ffmpeg` and `yt-dlp` for this purpose.
+- **Bright Data** (`preview/extractor_brightdata.go`) maps URL patterns to hard-coded dataset IDs (Instagram reels, X posts). It calls the sync `/scrape` endpoint and polls the snapshot when collection exceeds ~60s; Instagram takes ~30-75s, X a few seconds. Its order relative to other extractors is up to the configuration.
+- Extractors may return `file://` URLs for locally produced files. Create them with `newTempMediaFile` (`preview/ffmpeg.go`) so the reuploader deletes them after reading. `muxToMP4` merges/remuxes one or more inputs (e.g. separate video and audio tracks) into an mp4 with ffmpeg; the Docker image includes `ffmpeg` and `yt-dlp`.
+- `fetchMedia` (`preview/reuploader.go`) downloads in memory and, if the result isn't an allowed media type, falls back to remuxing the URL with `muxToMP4`. Content sniffing goes through `detectContentType`, which also accepts mp4s lacking an `mp4*` ftyp brand.
 - Destinations must reject filenames containing path separators (`validateSimpleFilename`); the manifest's not-found error must satisfy `errors.Is(err, fs.ErrNotExist)` for the cache fast path to work.
 - **HTTP calls** go through `httpGet`/`httpDo`/`JSONRequest[V, E]` in `preview/helpers.go`, which share a cookie jar, a browser User-Agent, a 30s timeout, and emit trace spans.
 - **Tracing**: package-level `tracer = otel.Tracer(...)`; spans are closed with `defer tr.End(span, &err)` to record the named return error. The `tr` package initializes the provider in `init()`.

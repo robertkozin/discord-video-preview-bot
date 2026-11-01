@@ -9,7 +9,6 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
-	"net/http"
 	"net/url"
 	"os"
 	"slices"
@@ -20,6 +19,8 @@ import (
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/trace"
 )
+
+var errMediaTooLarge = errors.New("remote media is too large")
 
 type Reuploader struct {
 	Extractors  []Extractor
@@ -144,14 +145,9 @@ func (reup *Reuploader) transfer(ctx context.Context, remoteURL string, name str
 	ctx, span := tracer.Start(ctx, "transfer_one", trace.WithAttributes(attribute.String("remote_url", remoteURL)))
 	defer span.End()
 
-	body, err := download(ctx, remoteURL)
+	body, contentType, err := fetchMedia(ctx, remoteURL)
 	if err != nil {
-		return "", fmt.Errorf("downloading media to memory: %w", err)
-	}
-
-	contentType := http.DetectContentType(body)
-	if !slices.Contains(allowedMediaTypes, contentType) {
-		return "", fmt.Errorf("expecting allowed content type: %s", contentType)
+		return "", err
 	}
 
 	ext := extensionByType[contentType]
@@ -164,6 +160,36 @@ func (reup *Reuploader) transfer(ctx context.Context, remoteURL string, name str
 	}
 
 	return filename, nil
+}
+
+// fetchMedia downloads remoteURL into memory. When the go downloader doesn't
+// produce allowed media (odd containers, HLS playlists, etc.) it falls back to
+// letting ffmpeg remux the url into an mp4.
+func fetchMedia(ctx context.Context, remoteURL string) ([]byte, string, error) {
+	body, err := download(ctx, remoteURL)
+	if err == nil {
+		contentType := detectContentType(body)
+		if slices.Contains(allowedMediaTypes, contentType) {
+			return body, contentType, nil
+		}
+		err = fmt.Errorf("expecting allowed content type: %s", contentType)
+	} else {
+		err = fmt.Errorf("downloading media to memory: %w", err)
+	}
+
+	if errors.Is(err, errMediaTooLarge) || !strings.HasPrefix(remoteURL, "http") {
+		return nil, "", err
+	}
+
+	fileURL, muxErr := muxToMP4(ctx, remoteURL)
+	if muxErr != nil {
+		return nil, "", errors.Join(err, fmt.Errorf("ffmpeg fallback: %w", muxErr))
+	}
+	body, muxErr = download(ctx, fileURL)
+	if muxErr != nil {
+		return nil, "", errors.Join(err, fmt.Errorf("ffmpeg fallback: %w", muxErr))
+	}
+	return body, "video/mp4", nil
 }
 
 func download(ctx context.Context, remoteURL string) ([]byte, error) {
@@ -186,6 +212,10 @@ func download(ctx context.Context, remoteURL string) ([]byte, error) {
 }
 
 func downloadFile(path string) ([]byte, error) {
+	if isTempMediaFile(path) {
+		defer os.Remove(path)
+	}
+
 	file, err := os.Open(path)
 	if err != nil {
 		return nil, fmt.Errorf("opening file: %w", err)
@@ -212,7 +242,7 @@ func downloadHttp(ctx context.Context, remoteURL string) ([]byte, error) {
 	}
 
 	if resp.ContentLength > MaxMediaSize {
-		return nil, fmt.Errorf("remote media is too large: %d bytes", resp.ContentLength)
+		return nil, fmt.Errorf("%w: %d bytes", errMediaTooLarge, resp.ContentLength)
 	}
 
 	return readAll(resp.Body, resp.ContentLength)
@@ -220,7 +250,7 @@ func downloadHttp(ctx context.Context, remoteURL string) ([]byte, error) {
 
 func readAll(reader io.Reader, size int64) (body []byte, err error) {
 	if size > 0 {
-		body = make([]byte, 0, size)
+		body = make([]byte, size)
 		_, err = io.ReadFull(reader, body)
 	} else if size < 0 {
 		body, err = io.ReadAll(reader)
