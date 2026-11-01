@@ -22,7 +22,7 @@ func (ex *SSSTikExtractor) IsSupported(mediaURL string) bool {
 }
 
 func (ex *SSSTikExtractor) Extract(ctx context.Context, mediaURL string) ([]string, error) {
-	ctx, span := tracer.Start(ctx, "ssstik_extract")
+	_, span := tracer.Start(ctx, "ssstik_extract")
 	defer span.End()
 
 	remoteURL, err := browser.TryChan(func(page *rod.Page, ret chan string) {

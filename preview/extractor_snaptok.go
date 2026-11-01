@@ -22,7 +22,7 @@ func (ex *SnapTokExtractor) IsSupported(mediaURL string) bool {
 }
 
 func (ex *SnapTokExtractor) Extract(ctx context.Context, mediaURL string) ([]string, error) {
-	ctx, span := tracer.Start(ctx, "snaptok_extract")
+	_, span := tracer.Start(ctx, "snaptok_extract")
 	defer span.End()
 
 	remoteURL, err := browser.TryChan(func(page *rod.Page, ret chan string) {

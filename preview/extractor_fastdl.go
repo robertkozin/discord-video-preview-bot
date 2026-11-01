@@ -23,7 +23,7 @@ func (fdl *FastDLExtractor) IsSupported(mediaURL string) bool {
 }
 
 func (ex *FastDLExtractor) Extract(ctx context.Context, mediaURL string) ([]string, error) {
-	ctx, span := tracer.Start(ctx, "fastdl_extract")
+	_, span := tracer.Start(ctx, "fastdl_extract")
 	defer span.End()
 
 	remoteURL, err := browser.TryChan(func(page *rod.Page, ret chan string) {

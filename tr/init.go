@@ -12,9 +12,10 @@ import (
 
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracegrpc"
+	"go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracehttp"
 	"go.opentelemetry.io/otel/sdk/resource"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
-	semconv "go.opentelemetry.io/otel/semconv/v1.37.0"
+	semconv "go.opentelemetry.io/otel/semconv/v1.43.0"
 	"go.opentelemetry.io/otel/trace"
 	"go.opentelemetry.io/otel/trace/noop"
 )
@@ -60,25 +61,33 @@ func initTracer(serviceName string) (trace.TracerProvider, error) {
 	}
 
 	// Create exporter
-	opts := []otlptracegrpc.Option{}
-	opts = append(opts, otlptracegrpc.WithEndpoint(endpoint))
-
 	isLocal, err := isLoopbackAddress(endpoint)
 	if err != nil {
 		return nil, fmt.Errorf("figuring out if %q is a local address: %w", endpoint, err)
-	} else if isLocal {
-		opts = append(opts, otlptracegrpc.WithInsecure())
 	}
 
+	var headers map[string]string
 	rawHeaders, ok := os.LookupEnv("OTEL_EXPORTER_OTLP_HEADERS")
 	if ok && rawHeaders != "" {
-		headers := parseOtelEnvHeaders(rawHeaders)
-		opts = append(opts, otlptracegrpc.WithHeaders(headers))
+		headers = parseOtelEnvHeaders(rawHeaders)
 	}
 
-	exporter, err := otlptracegrpc.New(ctx, opts...)
+	protocol := os.Getenv("OTEL_EXPORTER_OTLP_PROTOCOL")
+	if protocol == "" {
+		protocol = "grpc"
+	}
+
+	var exporter sdktrace.SpanExporter
+	switch protocol {
+	case "grpc":
+		exporter, err = newGRPCExporter(ctx, endpoint, isLocal, headers)
+	case "http/protobuf":
+		exporter, err = newHTTPExporter(ctx, endpoint, isLocal, headers)
+	default:
+		return nil, fmt.Errorf("unsupported OTEL_EXPORTER_OTLP_PROTOCOL %q", protocol)
+	}
 	if err != nil {
-		return nil, fmt.Errorf("creating otlp trace grpc exporter: %w", err)
+		return nil, err
 	}
 
 	// Create tracer provider
@@ -92,9 +101,53 @@ func initTracer(serviceName string) (trace.TracerProvider, error) {
 	return tp, nil
 }
 
+func newGRPCExporter(ctx context.Context, endpoint string, insecure bool, headers map[string]string) (sdktrace.SpanExporter, error) {
+	opts := []otlptracegrpc.Option{otlptracegrpc.WithEndpoint(endpoint)}
+	if insecure {
+		opts = append(opts, otlptracegrpc.WithInsecure())
+	}
+	if len(headers) > 0 {
+		opts = append(opts, otlptracegrpc.WithHeaders(headers))
+	}
+
+	exporter, err := otlptracegrpc.New(ctx, opts...)
+	if err != nil {
+		return nil, fmt.Errorf("creating otlp trace grpc exporter: %w", err)
+	}
+	return exporter, nil
+}
+
+func newHTTPExporter(ctx context.Context, endpoint string, insecure bool, headers map[string]string) (sdktrace.SpanExporter, error) {
+	opts := []otlptracehttp.Option{}
+
+	// OTEL_EXPORTER_OTLP_ENDPOINT is a base URL; the signal path gets appended to it.
+	if u, err := url.Parse(endpoint); err == nil && (u.Scheme == "http" || u.Scheme == "https") {
+		opts = append(opts,
+			otlptracehttp.WithEndpoint(u.Host),
+			otlptracehttp.WithURLPath(strings.TrimSuffix(u.Path, "/")+"/v1/traces"),
+		)
+		insecure = insecure || u.Scheme == "http"
+	} else {
+		opts = append(opts, otlptracehttp.WithEndpoint(endpoint))
+	}
+
+	if insecure {
+		opts = append(opts, otlptracehttp.WithInsecure())
+	}
+	if len(headers) > 0 {
+		opts = append(opts, otlptracehttp.WithHeaders(headers))
+	}
+
+	exporter, err := otlptracehttp.New(ctx, opts...)
+	if err != nil {
+		return nil, fmt.Errorf("creating otlp trace http exporter: %w", err)
+	}
+	return exporter, nil
+}
+
 func parseOtelEnvHeaders(fromEnv string) map[string]string {
 	headers := map[string]string{}
-	for _, pair := range strings.Split(fromEnv, ",") {
+	for pair := range strings.SplitSeq(fromEnv, ",") {
 		key, val, _ := strings.Cut(pair, "=")
 		headers[key] = val
 	}

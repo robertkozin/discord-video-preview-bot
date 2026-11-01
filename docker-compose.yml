@@ -8,7 +8,11 @@ services:
       DESTINATION: "rclone+webdav://rclone_webdav:8080"
       EXTRACTORS: "cobalt://cobalt:9000/?insecure=1"
       ROD_URL: "http://rod:7317"
-      OTEL_EXPORTER_OTLP_ENDPOINT: "traces:4317"
+      #CDP_URL: "ws://browserless:3000?token=..." # shared browserless instead of rod
+      #OTEL_EXPORTER_OTLP_ENDPOINT: "traces:4317"
+      #OTEL_EXPORTER_OTLP_ENDPOINT: "http://host.docker.internal:4318"
+      #OTEL_EXPORTER_OTLP_PROTOCOL: "http/protobuf"
+      #OTEL_EXPORTER_OTLP_HEADERS: "Authorization=Bearer D39CE857EB54D882E85B8F363E1BC785"
     ports:
       - "8081:8081" # debug ui
     develop:
@@ -48,8 +52,8 @@ services:
     environment:
       API_URL: "http://cobalt:9000/"
 
-  traces:
-    image: ghcr.io/ctrlspice/otel-desktop-viewer:latest-arm64
-    ports:
-      - "8005:8000"
-      - "4317:4317"
+  # traces:
+  #   image: ghcr.io/ctrlspice/otel-desktop-viewer:latest-arm64
+  #   ports:
+  #     - "8005:8000"
+  #     - "4317:4317"

@@ -23,7 +23,7 @@ func (ex *ReelsVideoExtractor) IsSupported(mediaURL string) bool {
 }
 
 func (ex *ReelsVideoExtractor) Extract(ctx context.Context, mediaURL string) ([]string, error) {
-	ctx, span := tracer.Start(ctx, "reelsvideo_extract")
+	_, span := tracer.Start(ctx, "reelsvideo_extract")
 	defer span.End()
 
 	remoteURL, err := browser.TryChan(func(page *rod.Page, ret chan string) {

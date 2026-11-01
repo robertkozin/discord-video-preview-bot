@@ -74,7 +74,7 @@ func SimpleServer(reup *preview.Reuploader) http.Handler {
 		case "GET":
 			err := tmpl.Execute(w, data)
 			if err != nil {
-				fmt.Printf("template execute error: %w\n", err)
+				fmt.Printf("template execute error: %v\n", err)
 			}
 		case "POST":
 			data.Input = r.FormValue("input")
@@ -87,7 +87,7 @@ func SimpleServer(reup *preview.Reuploader) http.Handler {
 
 			err = tmpl.Execute(w, data)
 			if err != nil {
-				fmt.Printf("template execute error: %w", err)
+				fmt.Printf("template execute error: %v\n", err)
 			}
 		default:
 			http.NotFound(w, r)

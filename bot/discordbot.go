@@ -43,8 +43,7 @@ func (b *Discord) Start() error {
 	dg.AddHandler(b.messageCreateHandler)
 	dg.AddHandler(b.messageUpdate)
 
-	var err error
-	err = dg.Open()
+	err := dg.Open()
 	if err != nil {
 		return fmt.Errorf("dg.Open: %w", err)
 	}
