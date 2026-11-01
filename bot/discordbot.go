@@ -42,6 +42,7 @@ func (b *Discord) Start() error {
 	dg.AddHandler(b.readyHandler)
 	dg.AddHandler(b.messageCreateHandler)
 	dg.AddHandler(b.messageUpdate)
+	dg.AddHandler(b.interactionCreate)
 
 	err := dg.Open()
 	if err != nil {
@@ -57,6 +58,7 @@ func (b *Discord) Close() error {
 
 func (b *Discord) readyHandler(s *discordgo.Session, m *discordgo.Ready) {
 	b.id = m.User.ID
+	go b.registerCommands(m.Application.ID)
 	if b.lastChannelMessage == nil {
 		b.lastChannelMessage = make(map[string]string)
 	}
