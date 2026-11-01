@@ -30,8 +30,11 @@ func Start() (stop func() error) {
 		}
 		cdpURL = u
 		// fail fast if the endpoint is unreachable
-		b := rod.New().ControlURL(cdpURL).MustConnect()
-		_ = b.Close()
+		_, closeProbe, err := connectCDP(cdpURL)
+		if err != nil {
+			panic(fmt.Sprintf("connecting to CDP_URL: %v", err))
+		}
+		_ = closeProbe()
 		return func() error { return nil }
 	} else if rodURL := os.Getenv("ROD_URL"); rodURL != "" {
 		l := launcher.MustNewManaged(rodURL)
@@ -80,16 +83,16 @@ func newPage() (page *rod.Page, cleanup func() error, err error) {
 		return page, page.Close, nil
 	}
 
-	b := rod.New().ControlURL(cdpURL)
-	if err = b.Connect(); err != nil {
-		return nil, nil, fmt.Errorf("connecting to cdp: %w", err)
+	b, closeConn, err := connectCDP(cdpURL)
+	if err != nil {
+		return nil, nil, err
 	}
 	page, err = b.Page(proto.TargetCreateTarget{})
 	if err != nil {
-		_ = b.Close()
+		_ = closeConn()
 		return nil, nil, err
 	}
-	return page, b.Close, nil
+	return page, closeConn, nil
 }
 
 func GetPage() (page *rod.Page, cleanup func() error) {

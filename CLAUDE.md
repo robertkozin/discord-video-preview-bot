@@ -30,7 +30,7 @@ All backends are configured as URLs whose **scheme selects the implementation** 
 - `EXTRACTORS` (comma-separated) and/or `EXTRACTOR_1`…`EXTRACTOR_10` — `cobalt://host:port?insecure=1&key=...` (`insecure` → http instead of https), `brightdata://?key=<api key>`, or `ytdlp://?proxy=<url-encoded proxy url>` (proxy optional). Dispatch in `preview.NewExtractor`.
 - `PUBLIC_URL` — base URL prepended to stored filenames to form the links posted to Discord.
 - `DISCORD_TOKEN` — enables bot mode.
-- `CDP_URL` — connect to a shared CDP endpoint such as browserless (`ws(s)://` or `http(s)://`, query like `?token=` preserved). Takes precedence over `ROD_URL`. Opens a new connection (= new browserless session) per page instead of holding one browser open.
+- `CDP_URL` — connect to a shared CDP endpoint such as browserless (`ws(s)://` or `http(s)://`, query like `?token=` preserved). Takes precedence over `ROD_URL`. Opens a new connection (= new browserless session) per page instead of holding one browser open. Connections go through a gorilla/websocket adapter (`browser/websocket.go`) because rod's built-in websocket parses close frames as JSON and panics when browserless ends a session.
 - `ROD_URL` — connect to a remote rod/Chrome manager instead of launching a local browser.
 - `OTEL_EXPORTER_OTLP_ENDPOINT` / `_PROTOCOL` (`grpc` default, or `http/protobuf`) / `_HEADERS` — tracing; a no-op tracer is used if the endpoint is unset.
 
