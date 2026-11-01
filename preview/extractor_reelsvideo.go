@@ -42,7 +42,7 @@ func (ex *ReelsVideoExtractor) extract(page *rod.Page, target string, ret chan s
 
 	page.Race().Element("a.download_link").MustHandle(func(e *rod.Element) {
 		ret <- e.MustProperty("href").Str()
-	}).Element("#errorContainer").MustHandle(func(e *rod.Element) {
+	}).Element("#errorContainer > *").MustHandle(func(e *rod.Element) {
 		panic(e.MustText())
 	}).MustDo()
 }

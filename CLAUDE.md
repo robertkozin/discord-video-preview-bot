@@ -50,7 +50,7 @@ bot (Discord handler | debug HTTP server)
 Key points that span multiple files:
 
 - **`preview.Extractor`** (`IsSupported`, `Extract`) and **`preview.Destination`** (`Upload`, `Download`, `Close`, `String`) in `preview/preview.go` are the two extension points. Each implementation lives in `preview/extractor_*.go` / `preview/destination_*.go` and asserts the interface with `var _ Extractor = (*X)(nil)`.
-- **Extractor order matters.** URL-configured extractors (cobalt) come first; the hardcoded browser-scraping fallbacks (`FastDL`, `SSSTik`, `ReelsVideo`, `SnapTok`) are appended in `main.go`. `Reuploader.extract` tries each supporting extractor in order and joins errors if all fail.
+- **Extractor order matters.** URL-configured extractors (cobalt) come first; the hardcoded browser-scraping fallbacks (`FastDL`, `SSSTik`, `ReelsVideo`) are appended in `main.go`. `Reuploader.extract` tries each supporting extractor in order and joins errors if all fail.
 - **URL matching** uses `simpleURLMatch` (`preview/helpers.go`): strips `https://` and `www.`, then glob-matches with `tidwall/match` patterns like `"instagram.com/reel/*"`.
 - **Browser-scraping extractors** drive a third-party download site via go-rod using the helpers in `browser/browser.go`: `browser.TryChan` gives a fresh page and converts rod's `Must*` panics into errors; `BlockThirdParty` blocks non-first-party and non-essential requests. Follow the existing extractors' shape (`page.Timeout`, `page.Race()` between success and error elements).
 - Extractors may return `file://` URLs (e.g. for locally produced files); the Docker image includes `ffmpeg` and `yt-dlp` for this purpose.

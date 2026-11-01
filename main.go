@@ -83,7 +83,6 @@ func run(ctx context.Context, args Args) error {
 		&preview.FastDLExtractor{},
 		&preview.SSSTikExtractor{},
 		&preview.ReelsVideoExtractor{},
-		&preview.SnapTokExtractor{},
 	)
 
 	dest, err := preview.NewDestination(ctx, args.Destination)
