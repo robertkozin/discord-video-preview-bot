@@ -64,6 +64,8 @@ func NewExtractor(config *url.URL) (ex Extractor, err error) {
 		ex, err = NewCobalt(config)
 	case "brightdata":
 		ex, err = NewBrightData(config)
+	case "ytdlp":
+		ex, err = NewYtDlp(config)
 	default:
 		err = fmt.Errorf("unknown extractor: %s", config.Scheme)
 	}
