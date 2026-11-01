@@ -2,6 +2,7 @@ package preview
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"mime"
@@ -45,6 +46,11 @@ func init() {
 	mime.AddExtensionType(".wav", "audio/wav")
 	mime.AddExtensionType(".ogg", "audio/ogg")
 }
+
+// ErrNoVideo is returned (wrapped) by an extractor when it is sure the link
+// has nothing for any extractor to download, e.g. a text-only tweet. Like
+// fs.SkipAll, it stops the reuploader from trying the remaining extractors.
+var ErrNoVideo = errors.New("link has no video")
 
 type Extractor interface {
 	IsSupported(mediaURL string) (ok bool)

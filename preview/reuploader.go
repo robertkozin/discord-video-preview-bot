@@ -100,6 +100,9 @@ func (reup *Reuploader) extract(ctx context.Context, mediaURL string) (remoteURL
 	for _, extractor := range reup.Extractors {
 		if extractor.IsSupported(mediaURL) {
 			remoteURLs, err = extractor.Extract(ctx, mediaURL)
+			if errors.Is(err, ErrNoVideo) {
+				return nil, fmt.Errorf("extracting media: %s: %w", mediaURL, err)
+			}
 			if err != nil {
 				errs = append(errs, err)
 				continue

@@ -2,6 +2,7 @@ package preview
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/url"
 )
@@ -97,6 +98,14 @@ func (ex *CobaltExtractor) Extract(ctx context.Context, url string) ([]string, e
 
 	_, value, err := JSONRequest[CobaltResponse, CobaltError](ctx, "POST", ex.Endpoint, req, headers...)
 	if err != nil {
+		// for x, cobalt only says "empty" once both its graphql and syndication
+		// lookups found no media (private/unavailable posts have their own codes).
+		// other services use "empty" for any fetch failure, so don't trust it there.
+		var cobaltErr CobaltError
+		if errors.As(err, &cobaltErr) && cobaltErr.Err.Code == "error.api.fetch.empty" &&
+			simpleURLMatch(url, []string{"x.com/*/status/*", "twitter.com/*/status/*"}) {
+			return nil, fmt.Errorf("cobalt: %w", ErrNoVideo)
+		}
 		return nil, fmt.Errorf("making cobalt request: %w", err)
 	}
 

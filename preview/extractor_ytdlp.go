@@ -104,7 +104,12 @@ func (ex *YtDlpExtractor) Extract(ctx context.Context, mediaURL string) ([]strin
 
 	if err = cmd.Run(); err != nil {
 		removeMatching(base + "*")
-		err = fmt.Errorf("running yt-dlp: %w: %s", err, lastLine(stderr.String()))
+		msg := lastLine(stderr.String())
+		if ytDlpNoVideo(msg) {
+			err = fmt.Errorf("yt-dlp: %s: %w", msg, ErrNoVideo)
+			return nil, err
+		}
+		err = fmt.Errorf("running yt-dlp: %w: %s", err, msg)
 		return nil, err
 	}
 
@@ -121,6 +126,16 @@ func (ex *YtDlpExtractor) Extract(ctx context.Context, mediaURL string) ([]strin
 	}
 
 	return []string{"file://" + path}, nil
+}
+
+// ytDlpNoVideo reports whether yt-dlp failed because the post has no video.
+// Only x and bluesky count: their messages also cover image posts, but cobalt
+// handles those first and no later extractor can do better. Instagram's
+// "There is no video in this post" is left out so photo posts can still fall
+// through to extractors that download images.
+func ytDlpNoVideo(stderr string) bool {
+	return (strings.Contains(stderr, "[twitter]") && strings.Contains(stderr, "No video could be found in this tweet")) ||
+		(strings.Contains(stderr, "[Bluesky]") && strings.Contains(stderr, "No video could be found in this post"))
 }
 
 func removeMatching(pattern string) {
