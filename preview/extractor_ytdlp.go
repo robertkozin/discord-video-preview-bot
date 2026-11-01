@@ -128,14 +128,13 @@ func (ex *YtDlpExtractor) Extract(ctx context.Context, mediaURL string) ([]strin
 	return []string{"file://" + path}, nil
 }
 
-// ytDlpNoVideo reports whether yt-dlp failed because the post has no video.
-// Only x and bluesky count: their messages also cover image posts, but cobalt
-// handles those first and no later extractor can do better. Instagram's
-// "There is no video in this post" is left out so photo posts can still fall
-// through to extractors that download images.
+// ytDlpNoVideo reports whether yt-dlp loaded the post and found no video in it
+// (text or photo-only posts). Only messages that can't come from a block or a
+// login wall count, e.g. not instagram's "empty media response".
 func ytDlpNoVideo(stderr string) bool {
 	return (strings.Contains(stderr, "[twitter]") && strings.Contains(stderr, "No video could be found in this tweet")) ||
-		(strings.Contains(stderr, "[Bluesky]") && strings.Contains(stderr, "No video could be found in this post"))
+		(strings.Contains(stderr, "[Bluesky]") && strings.Contains(stderr, "No video could be found in this post")) ||
+		(strings.Contains(stderr, "[Instagram]") && strings.Contains(stderr, "There is no video in this post"))
 }
 
 func removeMatching(pattern string) {
