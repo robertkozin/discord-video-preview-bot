@@ -2,9 +2,13 @@ package preview
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/url"
+
+	"github.com/robertkozin/discord-video-preview-bot/tr"
+	"go.opentelemetry.io/otel/attribute"
 )
 
 var _ Extractor = (*CobaltExtractor)(nil)
@@ -64,11 +68,15 @@ type CobaltRequest struct {
 type CobaltError struct {
 	Status string `json:"status"`
 	Err    struct {
-		Code string `json:"code"`
+		Code    string          `json:"code"`
+		Context json.RawMessage `json:"context"`
 	} `json:"error"`
 }
 
 func (ce CobaltError) Error() string {
+	if len(ce.Err.Context) > 0 && string(ce.Err.Context) != "null" {
+		return fmt.Sprintf("cobalt error: %s %s", ce.Err.Code, ce.Err.Context)
+	}
 	return "cobalt error: " + ce.Err.Code
 }
 
@@ -84,13 +92,14 @@ type CobaltPicker struct {
 	Url  string `json:"url"`
 }
 
-func (ex *CobaltExtractor) Extract(ctx context.Context, url string) ([]string, error) {
+func (ex *CobaltExtractor) Extract(ctx context.Context, url string) (_ []string, err error) {
 	var (
 		req     = CobaltRequest{Url: url}
 		headers []string
 	)
 	ctx, span := tracer.Start(ctx, "cobalt_extract")
-	defer span.End()
+	defer tr.End(span, &err)
+	span.SetAttributes(attribute.String("site", siteOf(url)))
 
 	if ex.APIKey != "" {
 		headers = []string{"Authorization", "Api-Key " + ex.APIKey}
@@ -102,6 +111,9 @@ func (ex *CobaltExtractor) Extract(ctx context.Context, url string) ([]string, e
 		// lookups found no media (private/unavailable posts have their own codes).
 		// other services use "empty" for any fetch failure, so don't trust it there.
 		var cobaltErr CobaltError
+		if errors.As(err, &cobaltErr) {
+			span.SetAttributes(attribute.String("cobalt.error_code", cobaltErr.Err.Code))
+		}
 		if errors.As(err, &cobaltErr) && cobaltErr.Err.Code == "error.api.fetch.empty" &&
 			simpleURLMatch(url, []string{"x.com/*/status/*", "twitter.com/*/status/*"}) {
 			return nil, fmt.Errorf("cobalt: %w", ErrNoVideo)
@@ -109,6 +121,7 @@ func (ex *CobaltExtractor) Extract(ctx context.Context, url string) ([]string, e
 		return nil, fmt.Errorf("making cobalt request: %w", err)
 	}
 
+	span.SetAttributes(attribute.String("cobalt.status", value.Status))
 	switch value.Status {
 	case "redirect":
 		return []string{value.Url}, nil

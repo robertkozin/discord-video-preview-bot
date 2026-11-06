@@ -7,6 +7,7 @@ import (
 	"github.com/go-rod/rod"
 	"github.com/go-rod/rod/lib/input"
 	"github.com/robertkozin/discord-video-preview-bot/browser"
+	"github.com/robertkozin/discord-video-preview-bot/tr"
 )
 
 var _ Extractor = (*SSSTikExtractor)(nil)
@@ -21,15 +22,18 @@ func (ex *SSSTikExtractor) IsSupported(mediaURL string) bool {
 	})
 }
 
-func (ex *SSSTikExtractor) Extract(ctx context.Context, mediaURL string) ([]string, error) {
+func (ex *SSSTikExtractor) Extract(ctx context.Context, mediaURL string) (_ []string, err error) {
 	_, span := tracer.Start(ctx, "ssstik_extract")
-	defer span.End()
+	defer tr.End(span, &err)
 
 	remoteURL, err := browser.TryChan(func(page *rod.Page, ret chan string) {
 		page = page.Timeout(15 * time.Second)
 		ex.extract(page, mediaURL, ret)
 	})
-	return []string{remoteURL}, err
+	if err != nil {
+		return nil, err
+	}
+	return []string{remoteURL}, nil
 }
 
 func (ex *SSSTikExtractor) extract(page *rod.Page, target string, ret chan string) {

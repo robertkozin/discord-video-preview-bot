@@ -9,6 +9,9 @@ import (
 	"io/fs"
 	"net/http"
 	"net/url"
+
+	"github.com/robertkozin/discord-video-preview-bot/tr"
+	"go.opentelemetry.io/otel/attribute"
 )
 
 var _ Destination = (*RCloneWebDAVDestination)(nil)
@@ -34,9 +37,9 @@ func (r *RCloneWebDAVDestination) Close() error {
 	return nil
 }
 
-func (r *RCloneWebDAVDestination) Download(ctx context.Context, name string) ([]byte, error) {
+func (r *RCloneWebDAVDestination) Download(ctx context.Context, name string) (_ []byte, err error) {
 	ctx, span := tracer.Start(ctx, "rclone+webdav_download")
-	defer span.End()
+	defer tr.EndIgnore(span, &err, fs.ErrNotExist)
 
 	if err := validateSimpleFilename(name); err != nil {
 		return nil, err
@@ -50,14 +53,15 @@ func (r *RCloneWebDAVDestination) Download(ctx context.Context, name string) ([]
 	}
 	defer resp.Body.Close()
 
+	// check 404 first: a not-found response can also have an empty body
+	if resp.StatusCode == http.StatusNotFound {
+		return nil, fs.ErrNotExist
+	}
+
 	if resp.ContentLength > MaxMediaSize {
 		return nil, errors.New("media too large")
 	} else if resp.ContentLength <= 0 {
 		return nil, errors.New("media is empty")
-	}
-
-	if resp.StatusCode == http.StatusNotFound {
-		return nil, fs.ErrNotExist
 	}
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
@@ -73,9 +77,10 @@ func (r *RCloneWebDAVDestination) Download(ctx context.Context, name string) ([]
 	return content, nil
 }
 
-func (r *RCloneWebDAVDestination) Upload(ctx context.Context, name string, content []byte) error {
+func (r *RCloneWebDAVDestination) Upload(ctx context.Context, name string, content []byte) (err error) {
 	ctx, span := tracer.Start(ctx, "rclone+webdav_upload")
-	defer span.End()
+	defer tr.End(span, &err)
+	span.SetAttributes(attribute.Int("media.bytes", len(content)))
 
 	if err := validateSimpleFilename(name); err != nil {
 		return err

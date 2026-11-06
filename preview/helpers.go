@@ -9,10 +9,12 @@ import (
 	"mime"
 	"net/http"
 	"net/http/cookiejar"
+	"net/url"
 	"path/filepath"
 	"strings"
 	"time"
 
+	"github.com/robertkozin/discord-video-preview-bot/tr"
 	"github.com/tidwall/match"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
@@ -46,7 +48,7 @@ func httpDo(req *http.Request) (*http.Response, error) {
 
 func httpDoWith(client *http.Client, req *http.Request) (*http.Response, error) {
 	_, span := tracer.Start(req.Context(), "http_do", trace.WithAttributes(
-		attribute.String("url", req.URL.String()),
+		attribute.String("url", redactURL(req.URL)),
 		attribute.String("method", req.Method),
 	))
 	defer span.End()
@@ -59,7 +61,11 @@ func httpDoWith(client *http.Client, req *http.Request) (*http.Response, error) 
 		span.SetStatus(codes.Error, err.Error())
 		span.RecordError(err)
 	} else {
-		span.SetStatus(codes.Ok, resp.Status)
+		if resp.StatusCode >= 500 {
+			span.SetStatus(codes.Error, resp.Status)
+		} else {
+			span.SetStatus(codes.Ok, resp.Status)
+		}
 		span.SetAttributes(
 			attribute.String("status", resp.Status),
 			attribute.Int("status_code", resp.StatusCode),
@@ -70,6 +76,53 @@ func httpDoWith(client *http.Client, req *http.Request) (*http.Response, error) 
 	}
 
 	return resp, err
+}
+
+// redactURL drops the query, fragment and credentials from u so signed urls
+// (cobalt tunnels, CDN tokens) don't end up in traces.
+func redactURL(u *url.URL) string {
+	r := *u
+	r.RawQuery, r.Fragment, r.User = "", "", nil
+	return r.String()
+}
+
+// redactRawURL is redactURL for strings; file:// and unparsable values pass through.
+func redactRawURL(raw string) string {
+	u, err := url.Parse(raw)
+	if err != nil {
+		return "unparsable"
+	}
+	return redactURL(u)
+}
+
+// siteOf returns a low-cardinality site name for a media url, e.g. "x.com",
+// "instagram.com", "reddit.com".
+func siteOf(rawURL string) string {
+	u, err := url.Parse(rawURL)
+	if err != nil || u.Hostname() == "" {
+		return "unknown"
+	}
+	host := strings.ToLower(u.Hostname())
+	switch host {
+	case "t.co", "twitter.com", "mobile.twitter.com":
+		return "x.com"
+	case "redd.it", "v.redd.it":
+		return "reddit.com"
+	case "youtu.be":
+		return "youtube.com"
+	}
+	parts := strings.Split(host, ".")
+	if len(parts) > 2 {
+		host = strings.Join(parts[len(parts)-2:], ".")
+	}
+	return host
+}
+
+func truncate(s string, n int) string {
+	if len(s) <= n {
+		return s
+	}
+	return s[:n] + "..."
 }
 
 func getResponseExtension(resp *http.Response) string {
@@ -125,9 +178,9 @@ func validateSimpleFilename(filename string) error {
 
 }
 
-func JSONRequest[V any, E error](ctx context.Context, method, url string, body any, headers ...string) (*http.Response, *V, error) {
+func JSONRequest[V any, E error](ctx context.Context, method, url string, body any, headers ...string) (resp *http.Response, value *V, err error) {
 	ctx, span := tracer.Start(ctx, "json_request")
-	defer span.End()
+	defer tr.End(span, &err)
 
 	var reqBody io.Reader
 	if body != nil {
@@ -152,7 +205,7 @@ func JSONRequest[V any, E error](ctx context.Context, method, url string, body a
 		}
 	}
 
-	resp, err := httpDo(req)
+	resp, err = httpDo(req)
 	if err != nil {
 		return nil, nil, fmt.Errorf("sending http request: %w", err)
 	}
@@ -164,11 +217,15 @@ func JSONRequest[V any, E error](ctx context.Context, method, url string, body a
 	}
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		span.SetAttributes(
+			attribute.Int("http.status_code", resp.StatusCode),
+			attribute.String("http.response.body", truncate(string(respBody), 512)),
+		)
 		var errorJSON E
 		if err := json.Unmarshal(respBody, &errorJSON); err != nil {
-			return resp, nil, fmt.Errorf("parsing error body: %s: %w", resp.Status, err)
+			return resp, nil, fmt.Errorf("parsing error body: %s: %s: %w", resp.Status, truncate(string(respBody), 200), err)
 		}
-		return resp, nil, errorJSON // TODO: wrap with error code?
+		return resp, nil, fmt.Errorf("%s: %w", resp.Status, errorJSON)
 	}
 
 	var valueJSON V

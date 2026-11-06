@@ -45,8 +45,15 @@ func (reup *Reuploader) IsSupported(mediaURL string) bool {
 
 func (reup *Reuploader) Reupload(ctx context.Context, mediaURL string) ([]string, error) {
 	var err error
+	// also tag the caller's span (discord_reply / discord_command) so a trace
+	// can be filtered by site, extractor and cache outcome from its root
+	parent := trace.SpanFromContext(ctx)
 	ctx, span := tracer.Start(ctx, "reupload")
 	defer tr.End(span, &err)
+	setAttrs := func(kv ...attribute.KeyValue) {
+		span.SetAttributes(kv...)
+		parent.SetAttributes(kv...)
+	}
 
 	cleanURL, err := cleanURLParams(mediaURL, allowedParams)
 	if err != nil {
@@ -55,6 +62,7 @@ func (reup *Reuploader) Reupload(ctx context.Context, mediaURL string) ([]string
 	mediaID := sha12(cleanURL)
 
 	span.SetAttributes(attribute.String("media_url", mediaURL), attribute.String("clean_url", cleanURL), attribute.String("media_id", mediaID))
+	setAttrs(attribute.String("preview.site", siteOf(cleanURL)))
 
 	// fast path: video has already been reuploaded
 	manifest, err := reup.getManifest(ctx, mediaID)
@@ -63,15 +71,18 @@ func (reup *Reuploader) Reupload(ctx context.Context, mediaURL string) ([]string
 			return nil, fmt.Errorf("getting manifest: %w", err)
 		}
 	} else {
+		setAttrs(attribute.Bool("preview.cache_hit", true), attribute.Int("preview.files", len(manifest.Files)))
 		permalinks := reup.formatPermalinks(manifest.Files)
 		return permalinks, nil
 	}
 
 	// slow path:
-	remoteURLs, err := reup.extract(ctx, cleanURL)
+	setAttrs(attribute.Bool("preview.cache_hit", false))
+	remoteURLs, extractor, err := reup.extract(ctx, cleanURL)
 	if err != nil {
 		return nil, fmt.Errorf("extracting: %w", err)
 	}
+	setAttrs(attribute.String("preview.extractor", extractor))
 
 	filenames, err := reup.transferMany(ctx, remoteURLs, mediaID)
 	if err != nil {
@@ -88,39 +99,55 @@ func (reup *Reuploader) Reupload(ctx context.Context, mediaURL string) ([]string
 		return nil, fmt.Errorf("uploading manifest: %w", err)
 	}
 
+	setAttrs(attribute.Int("preview.files", len(manifest.Files)))
 	permalinks := reup.formatPermalinks(manifest.Files)
 	return permalinks, nil
 }
 
-func (reup *Reuploader) extract(ctx context.Context, mediaURL string) (remoteURLs []string, err error) {
+// extract returns the remote urls and the name of the extractor that produced them.
+func (reup *Reuploader) extract(ctx context.Context, mediaURL string) (remoteURLs []string, used string, err error) {
 	ctx, span := tracer.Start(ctx, "extract")
 	defer tr.End(span, &err)
+	span.SetAttributes(attribute.String("site", siteOf(mediaURL)))
 
 	errs := []error{}
+	var attempted []string
+	defer func() {
+		span.SetAttributes(attribute.StringSlice("extractor.attempted", attempted))
+	}()
 	for _, extractor := range reup.Extractors {
 		if extractor.IsSupported(mediaURL) {
+			name := extractorName(extractor)
+			attempted = append(attempted, name)
 			remoteURLs, err = extractor.Extract(ctx, mediaURL)
 			if errors.Is(err, ErrNoVideo) {
-				return nil, fmt.Errorf("extracting media: %s: %w", mediaURL, err)
+				span.SetAttributes(attribute.Bool("extractor.no_video", true))
+				return nil, "", fmt.Errorf("extracting media: %s: %w", mediaURL, err)
 			}
 			if err != nil {
+				span.AddEvent("extractor_failed", trace.WithAttributes(
+					attribute.String("extractor", name),
+					attribute.String("error", truncate(err.Error(), 500)),
+				))
 				errs = append(errs, err)
 				continue
 			}
-			return remoteURLs, nil
+			span.SetAttributes(attribute.String("extractor.used", name))
+			return remoteURLs, name, nil
 		}
 	}
 
 	if len(errs) == 0 {
-		return nil, fmt.Errorf("no extractors matching: %s", mediaURL)
+		return nil, "", fmt.Errorf("no extractors matching: %s", mediaURL)
 	}
 
-	return nil, fmt.Errorf("extracting media: %s: %w", mediaURL, errors.Join(errs...))
+	return nil, "", fmt.Errorf("extracting media: %s: %w", mediaURL, errors.Join(errs...))
 }
 
-func (reup *Reuploader) transferMany(ctx context.Context, remoteURLs []string, mediaID string) ([]string, error) {
+func (reup *Reuploader) transferMany(ctx context.Context, remoteURLs []string, mediaID string) (_ []string, err error) {
 	ctx, span := tracer.Start(ctx, "transfer_many")
-	defer span.End()
+	defer tr.End(span, &err)
+	span.SetAttributes(attribute.Int("transfer.count", len(remoteURLs)))
 
 	if len(remoteURLs) == 1 {
 		name := mediaID
@@ -132,26 +159,35 @@ func (reup *Reuploader) transferMany(ctx context.Context, remoteURLs []string, m
 	}
 
 	filenames := make([]string, 0, len(remoteURLs))
+	var errs []error
 	for i, remoteURL := range remoteURLs {
 		name := fmt.Sprintf("%s-%d", mediaID, i+1)
 		filename, err := reup.transfer(ctx, remoteURL, name)
 		if err != nil {
-			continue // TODO, continue but keep track of errors, error if all are errors
+			errs = append(errs, err)
+			continue
 		}
 		filenames = append(filenames, filename)
+	}
+	span.SetAttributes(attribute.Int("transfer.failed", len(errs)))
+
+	// partial success still works, but all failing used to look like success
+	if len(filenames) == 0 && len(errs) > 0 {
+		return nil, errors.Join(errs...)
 	}
 
 	return filenames, nil
 }
 
-func (reup *Reuploader) transfer(ctx context.Context, remoteURL string, name string) (string, error) {
-	ctx, span := tracer.Start(ctx, "transfer_one", trace.WithAttributes(attribute.String("remote_url", remoteURL)))
-	defer span.End()
+func (reup *Reuploader) transfer(ctx context.Context, remoteURL string, name string) (_ string, err error) {
+	ctx, span := tracer.Start(ctx, "transfer_one", trace.WithAttributes(attribute.String("remote_url", redactRawURL(remoteURL))))
+	defer tr.End(span, &err)
 
 	body, contentType, err := fetchMedia(ctx, remoteURL)
 	if err != nil {
 		return "", err
 	}
+	span.SetAttributes(attribute.Int("media.bytes", len(body)), attribute.String("media.content_type", contentType))
 
 	ext := extensionByType[contentType]
 
@@ -195,9 +231,9 @@ func fetchMedia(ctx context.Context, remoteURL string) ([]byte, string, error) {
 	return body, "video/mp4", nil
 }
 
-func download(ctx context.Context, remoteURL string) ([]byte, error) {
+func download(ctx context.Context, remoteURL string) (_ []byte, err error) {
 	ctx, span := tracer.Start(ctx, "download")
-	defer span.End()
+	defer tr.End(span, &err)
 
 	parsedURL, err := url.Parse(remoteURL)
 	if err != nil {
@@ -264,12 +300,14 @@ func readAll(reader io.Reader, size int64) (body []byte, err error) {
 	return body, err
 }
 
-func (reup *Reuploader) getManifest(ctx context.Context, mediaID string) (Manifest, error) {
+func (reup *Reuploader) getManifest(ctx context.Context, mediaID string) (_ Manifest, err error) {
 	ctx, span := tracer.Start(ctx, "get_manifest")
-	defer span.End()
+	// a missing manifest is a cache miss, not a failure
+	defer tr.EndIgnore(span, &err, fs.ErrNotExist)
 
 	name := mediaID + ".json"
 	manifestBytes, err := reup.Destination.Download(ctx, name)
+	span.SetAttributes(attribute.Bool("cache.hit", err == nil))
 	if err != nil {
 		return Manifest{}, fmt.Errorf("downloading manifest: %w", err)
 	}
@@ -281,9 +319,9 @@ func (reup *Reuploader) getManifest(ctx context.Context, mediaID string) (Manife
 	return manifest, nil
 }
 
-func (reup *Reuploader) uploadManifest(ctx context.Context, mediaID string, manifest Manifest) error {
+func (reup *Reuploader) uploadManifest(ctx context.Context, mediaID string, manifest Manifest) (err error) {
 	ctx, span := tracer.Start(ctx, "upload_manifest")
-	defer span.End()
+	defer tr.End(span, &err)
 
 	b, err := json.MarshalIndent(manifest, "", "  ")
 	if err != nil {

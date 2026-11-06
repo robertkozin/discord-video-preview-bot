@@ -7,6 +7,7 @@ import (
 	"io"
 	"mime"
 	"net/url"
+	"strings"
 
 	"go.opentelemetry.io/otel"
 )
@@ -62,6 +63,13 @@ type Destination interface {
 	fmt.Stringer
 	Upload(ctx context.Context, name string, content []byte) error
 	Download(ctx context.Context, name string) ([]byte, error)
+}
+
+// extractorName is a short, stable name for trace attributes, e.g. "cobalt".
+func extractorName(ex Extractor) string {
+	name := strings.TrimPrefix(fmt.Sprintf("%T", ex), "*preview.")
+	name = strings.TrimSuffix(name, "Extractor")
+	return strings.ToLower(name)
 }
 
 func NewExtractor(config *url.URL) (ex Extractor, err error) {
