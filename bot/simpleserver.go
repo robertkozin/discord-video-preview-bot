@@ -33,7 +33,7 @@ var page = `<!doctype html>
 	{{if .Items}}
 		<h2>Canary links</h2>
 		<p>
-		{{range .Summary}}<strong>{{.Site}}</strong> {{.OK}} ok{{if .NoVideo}}, {{.NoVideo}} no video{{end}}{{if .Failed}}, <mark>{{.Failed}} failed</mark>{{end}}{{if .Pending}}, {{.Pending}} waiting{{end}} &nbsp; {{end}}
+		{{range .Summary}}<strong>{{.Site}}</strong> {{.OK}} ok{{if .NoVideo}}, {{.NoVideo}} no video{{end}}{{if .Failed}}, <mark>{{.Failed}} failed</mark>{{end}}{{if .Pending}}, {{.Pending}} waiting{{end}}{{if .OK}} ({{.WithMeta}}/{{.OK}} with info){{end}} &nbsp; {{end}}
 		</p>
 		<table>
 			<thead><tr><th>Tested</th><th>Result</th><th>Site</th><th>Via</th><th>Took</th><th>Link</th><th>Trace</th></tr></thead>
@@ -47,6 +47,7 @@ var page = `<!doctype html>
 					<td>{{.Took}}</td>
 					<td>
 						<a href="{{.URL}}" target="_blank" rel="noopener noreferrer nofollow">{{.ShortURL}}</a>
+						{{if .MetaText}}<br>{{.MetaText}}{{end}}
 						<br><small>{{.Context}} &middot; {{.Score}} points &middot; found {{.FoundAgo}}{{if .Permalink}} &middot; <a href="{{.Permalink}}" target="_blank" rel="noopener noreferrer nofollow">thread</a>{{end}}</small>
 						{{if .Error}}<br><small>{{.ShortError}}</small>{{end}}
 					</td>
@@ -64,6 +65,12 @@ var page = `<!doctype html>
 
 	{{if .URLs}}
 		<h2>Result</h2>
+		{{if .Metadata}}
+			<p><strong>Reply text:</strong> {{if .Reply}}{{.Reply}}{{else}}<em>(nothing, would use Discord's embed)</em>{{end}}</p>
+			<pre><code>{{printf "%+v" .Metadata}}</code></pre>
+		{{else}}
+			<p><em>No metadata{{if .CacheHit}} (cached before metadata was stored){{end}}; the bot would use Discord's embed.</em></p>
+		{{end}}
 		{{range .URLs}}
 			<p><a href="{{.}}" target="_blank">{{.}}</a></p>
 			{{if or (hasSuffix . ".mp4")}}
@@ -80,11 +87,14 @@ var page = `<!doctype html>
 </html>`
 
 type pageData struct {
-	Input   string
-	URLs    []string
-	Error   string
-	Items   []itemRow
-	Summary []siteSummary
+	Input    string
+	URLs     []string
+	Reply    string // the reply text the bot would post, from the extractor's metadata
+	Metadata *preview.Metadata
+	CacheHit bool
+	Error    string
+	Items    []itemRow
+	Summary  []siteSummary
 }
 
 type itemRow struct {
@@ -96,11 +106,13 @@ type itemRow struct {
 	ShortError string
 	ShortTrace string
 	TraceLink  string
+	MetaText   string // the reply text built from the extractor's metadata
 }
 
 type siteSummary struct {
 	Site                         string
 	OK, NoVideo, Failed, Pending int
+	WithMeta                     int // ok links that came with metadata
 }
 
 // maxItemRows is how many canary links the page lists.
@@ -133,6 +145,9 @@ func buildItems(items []canary.Item, grafanaURL string) ([]itemRow, []siteSummar
 		switch it.Status {
 		case "ok":
 			s.OK++
+			if !it.Metadata.Empty() {
+				s.WithMeta++
+			}
 		case "no_video":
 			s.NoVideo++
 		case "failed":
@@ -165,6 +180,7 @@ func buildItems(items []canary.Item, grafanaURL string) ([]itemRow, []siteSummar
 			ShortURL:   truncateTo(it.URL, 70),
 			ShortError: truncateTo(it.Error, 300),
 			ShortTrace: truncateTo(it.TraceID, 8),
+			MetaText:   metadataText(it.Metadata),
 		}
 		if !it.TestedAt.IsZero() {
 			row.Took = it.Duration.Round(10 * time.Millisecond).String()
@@ -228,11 +244,14 @@ func SimpleServer(reup *preview.Reuploader, items func() []canary.Item, grafanaU
 			}
 		case "POST":
 			data.Input = r.FormValue("input")
-			urls, err := reup.Reupload(r.Context(), data.Input)
+			res, err := reup.Reupload(r.Context(), data.Input)
 			if err != nil {
 				data.Error = err.Error()
 			} else {
-				data.URLs = urls
+				data.URLs = res.Links
+				data.Reply = metadataText(res.Metadata)
+				data.Metadata = res.Metadata
+				data.CacheHit = res.CacheHit
 			}
 
 			err = tmpl.Execute(w, data)

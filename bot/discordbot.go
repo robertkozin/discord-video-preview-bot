@@ -95,14 +95,21 @@ func (b *Discord) replyToMessage(ctx context.Context, s *discordgo.Session, m *d
 
 	embedCh := b.waitForEmbed(ctx, m)
 
-	hostedURLs, err := b.Reuploader.Reupload(ctx, url)
+	res, err := b.Reuploader.Reupload(ctx, url)
 	if err != nil {
 		span.RecordError(err)
 		span.SetStatus(1, err.Error())
 		return
 	}
 
-	reply := b.buildReply(<-embedCh, hostedURLs)
+	// prefer what the extractors know about the post, and only fall back to
+	// Discord's own embed (which can be slow or missing) when they had nothing
+	text := metadataText(res.Metadata)
+	span.SetAttributes(attribute.Bool("reply.text_from_metadata", text != ""))
+	if text == "" {
+		text = formatEmbedAsText(<-embedCh)
+	}
+	reply := b.buildReply(text, res.Links)
 
 	go b.HideEmbeds(m.ChannelID, m.ID)
 
@@ -152,9 +159,7 @@ func (b *Discord) waitForEmbed(ctx context.Context, mc *discordgo.MessageCreate)
 	return ret
 }
 
-func (b *Discord) buildReply(embed *discordgo.MessageEmbed, hostedURLs []string) *discordgo.MessageSend {
-	content := formatEmbedAsText(embed)
-
+func (b *Discord) buildReply(content string, hostedURLs []string) *discordgo.MessageSend {
 	galleryItems := make([]discordgo.MediaGalleryItem, len(hostedURLs))
 	for i, hostedURL := range hostedURLs {
 		galleryItems[i].Media = discordgo.UnfurledMediaItem{

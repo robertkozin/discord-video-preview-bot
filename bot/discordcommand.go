@@ -83,16 +83,21 @@ func (b *Discord) respondWithPreview(ctx context.Context, s *discordgo.Session, 
 		span.End()
 	}()
 
-	hostedURLs, err := b.Reuploader.Reupload(ctx, url)
+	res, err := b.Reuploader.Reupload(ctx, url)
 	if err != nil {
 		return
 	}
 
-	var embed *discordgo.MessageEmbed
-	if len(msg.Embeds) > 0 {
-		embed = msg.Embeds[0]
+	text := metadataText(res.Metadata)
+	span.SetAttributes(attribute.Bool("reply.text_from_metadata", text != ""))
+	if text == "" {
+		var embed *discordgo.MessageEmbed
+		if len(msg.Embeds) > 0 {
+			embed = msg.Embeds[0]
+		}
+		text = formatEmbedAsText(embed)
 	}
-	reply := b.buildReply(embed, hostedURLs)
+	reply := b.buildReply(text, res.Links)
 
 	// discordgo's WebhookEdit has no flags field, which components v2 needs
 	_, err = s.RequestWithBucketID("PATCH",

@@ -7,15 +7,20 @@ import (
 	"io"
 	"net/url"
 	"strings"
+	"time"
 
 	"github.com/robertkozin/discord-video-preview-bot/tr"
 	"go.opentelemetry.io/otel/attribute"
 )
 
-var _ Extractor = (*FxTwitterExtractor)(nil)
+var (
+	_ MediaExtractor   = (*FxTwitterExtractor)(nil)
+	_ MetadataProvider = (*FxTwitterExtractor)(nil)
+)
 
-// FxTwitterExtractor reads X/Twitter media urls from the FxEmbed (FixTweet)
-// JSON API. It needs no key and is plain HTTP, so it is quick and cheap.
+// FxTwitterExtractor reads X/Twitter media urls and post details from the
+// FxEmbed (FixTweet) JSON API. It needs no key and is plain HTTP, so it is
+// quick and cheap.
 type FxTwitterExtractor struct {
 	// Endpoint is the API base url, https://api.fxtwitter.com by default.
 	Endpoint string
@@ -46,16 +51,45 @@ func (ex *FxTwitterExtractor) IsSupported(mediaURL string) bool {
 }
 
 type fxTweetResponse struct {
-	Code    int    `json:"code"`
-	Message string `json:"message"`
-	Tweet   *struct {
-		Media *struct {
-			All []struct {
-				Type string `json:"type"` // photo / video / gif
-				URL  string `json:"url"`
-			} `json:"all"`
-		} `json:"media"`
-	} `json:"tweet"`
+	Code    int      `json:"code"`
+	Message string   `json:"message"`
+	Tweet   *fxTweet `json:"tweet"`
+}
+
+type fxTweet struct {
+	Text             string `json:"text"`
+	Likes            int64  `json:"likes"`
+	Retweets         int64  `json:"retweets"`
+	Replies          int64  `json:"replies"`
+	Views            int64  `json:"views"`
+	CreatedTimestamp int64  `json:"created_timestamp"`
+	Author           struct {
+		Name       string `json:"name"`
+		ScreenName string `json:"screen_name"`
+	} `json:"author"`
+	Media *struct {
+		All []struct {
+			Type string `json:"type"` // photo / video / gif
+			URL  string `json:"url"`
+		} `json:"all"`
+	} `json:"media"`
+}
+
+func (t *fxTweet) metadata() *Metadata {
+	m := &Metadata{
+		Description:  t.Text,
+		Author:       t.Author.Name,
+		AuthorHandle: t.Author.ScreenName,
+		Likes:        t.Likes,
+		Views:        t.Views,
+		Comments:     t.Replies,
+		Shares:       t.Retweets,
+		Source:       "fxtwitter",
+	}
+	if t.CreatedTimestamp > 0 {
+		m.PostedAt = time.Unix(t.CreatedTimestamp, 0).UTC()
+	}
+	return m
 }
 
 // tweetPath returns "<user>/status/<id>" for an x.com or twitter.com status url.
@@ -71,11 +105,8 @@ func tweetPath(mediaURL string) (string, error) {
 	return parts[0] + "/status/" + parts[2], nil
 }
 
-func (ex *FxTwitterExtractor) Extract(ctx context.Context, mediaURL string) (_ []string, err error) {
-	ctx, span := tracer.Start(ctx, "fxtwitter_extract")
-	defer tr.End(span, &err)
-	span.SetAttributes(attribute.String("site", siteOf(mediaURL)))
-
+func (ex *FxTwitterExtractor) fetch(ctx context.Context, mediaURL string) (*fxTweet, error) {
+	span := traceSpan(ctx)
 	path, err := tweetPath(mediaURL)
 	if err != nil {
 		return nil, err
@@ -102,10 +133,27 @@ func (ex *FxTwitterExtractor) Extract(ctx context.Context, mediaURL string) (_ [
 	if parsed.Code != 200 || parsed.Tweet == nil {
 		return nil, fmt.Errorf("fxtwitter: %d %s", parsed.Code, parsed.Message)
 	}
+	return parsed.Tweet, nil
+}
+
+func (ex *FxTwitterExtractor) Extract(ctx context.Context, mediaURL string) ([]string, error) {
+	media, err := ex.ExtractMedia(ctx, mediaURL)
+	return media.URLs, err
+}
+
+func (ex *FxTwitterExtractor) ExtractMedia(ctx context.Context, mediaURL string) (_ Media, err error) {
+	ctx, span := tracer.Start(ctx, "fxtwitter_extract")
+	defer tr.End(span, &err)
+	span.SetAttributes(attribute.String("site", siteOf(mediaURL)))
+
+	tweet, err := ex.fetch(ctx, mediaURL)
+	if err != nil {
+		return Media{}, err
+	}
 
 	var urls []string
-	if parsed.Tweet.Media != nil {
-		for _, m := range parsed.Tweet.Media.All {
+	if tweet.Media != nil {
+		for _, m := range tweet.Media.All {
 			if m.URL != "" {
 				urls = append(urls, m.URL)
 			}
@@ -113,9 +161,21 @@ func (ex *FxTwitterExtractor) Extract(ctx context.Context, mediaURL string) (_ [
 	}
 	if len(urls) == 0 {
 		// FxTwitter loaded the tweet and it has no media (text-only post)
-		return nil, fmt.Errorf("fxtwitter: %w", ErrNoVideo)
+		err = fmt.Errorf("fxtwitter: %w", ErrNoVideo)
+		return Media{}, err
 	}
 
 	span.SetAttributes(attribute.Int("extractor.urls", len(urls)))
-	return urls, nil
+	return Media{URLs: urls, Metadata: tweet.metadata()}, nil
+}
+
+func (ex *FxTwitterExtractor) Metadata(ctx context.Context, mediaURL string) (_ *Metadata, err error) {
+	ctx, span := tracer.Start(ctx, "fxtwitter_metadata")
+	defer tr.End(span, &err)
+
+	tweet, err := ex.fetch(ctx, mediaURL)
+	if err != nil {
+		return nil, err
+	}
+	return tweet.metadata(), nil
 }

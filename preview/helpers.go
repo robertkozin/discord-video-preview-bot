@@ -78,6 +78,9 @@ func httpDoWith(client *http.Client, req *http.Request) (*http.Response, error) 
 	return resp, err
 }
 
+// traceSpan is the span in ctx, for setting attributes from a helper.
+func traceSpan(ctx context.Context) trace.Span { return trace.SpanFromContext(ctx) }
+
 // redactURL drops the query, fragment and credentials from u so signed urls
 // (cobalt tunnels, CDN tokens) don't end up in traces.
 func redactURL(u *url.URL) string {

@@ -3,6 +3,7 @@ package preview
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/url"
 	"os"
@@ -60,8 +61,70 @@ func (ex *YtDlpExtractor) IsSupported(mediaURL string) bool {
 	})
 }
 
+var _ MediaExtractor = (*YtDlpExtractor)(nil)
+
 func (ex *YtDlpExtractor) Extract(ctx context.Context, mediaURL string) ([]string, error) {
-	var err error
+	media, err := ex.ExtractMedia(ctx, mediaURL)
+	return media.URLs, err
+}
+
+// ytDlpInfoTemplate prints the post details yt-dlp already has as one JSON
+// line (fields that are missing are left out).
+const ytDlpInfoTemplate = "%(.{title,description,uploader,channel,uploader_id,like_count,view_count,comment_count,repost_count,timestamp})j"
+
+type ytDlpInfo struct {
+	Title       string `json:"title"`
+	Description string `json:"description"`
+	Uploader    string `json:"uploader"`
+	Channel     string `json:"channel"`
+	UploaderID  string `json:"uploader_id"`
+	LikeCount   int64  `json:"like_count"`
+	ViewCount   int64  `json:"view_count"`
+	Comments    int64  `json:"comment_count"`
+	Reposts     int64  `json:"repost_count"`
+	Timestamp   int64  `json:"timestamp"`
+}
+
+func (i ytDlpInfo) metadata() *Metadata {
+	m := &Metadata{
+		Title:        i.Title,
+		Description:  i.Description,
+		Author:       i.Uploader,
+		AuthorHandle: i.UploaderID,
+		Likes:        i.LikeCount,
+		Views:        i.ViewCount,
+		Comments:     i.Comments,
+		Shares:       i.Reposts,
+		Source:       "ytdlp",
+	}
+	if m.Author == "" {
+		m.Author = i.Channel
+	}
+	if strings.TrimSpace(m.Title) == strings.TrimSpace(m.Description) {
+		m.Description = "" // many sites repeat the caption as both
+	}
+	if i.Timestamp > 0 {
+		m.PostedAt = time.Unix(i.Timestamp, 0).UTC()
+	}
+	return m
+}
+
+// parseYtDlpInfo finds the info line in yt-dlp's stdout; the file path is the last line.
+func parseYtDlpInfo(stdout string) *Metadata {
+	for _, line := range strings.Split(stdout, "\n") {
+		line = strings.TrimSpace(line)
+		if !strings.HasPrefix(line, "{") {
+			continue
+		}
+		var info ytDlpInfo
+		if json.Unmarshal([]byte(line), &info) == nil {
+			return info.metadata()
+		}
+	}
+	return nil
+}
+
+func (ex *YtDlpExtractor) ExtractMedia(ctx context.Context, mediaURL string) (_ Media, err error) {
 	ctx, span := tracer.Start(ctx, "ytdlp_extract")
 	defer tr.End(span, &err)
 	span.SetAttributes(attribute.Bool("proxy", ex.Proxy != ""))
@@ -72,7 +135,7 @@ func (ex *YtDlpExtractor) Extract(ctx context.Context, mediaURL string) ([]strin
 	// reserve a unique name, then let yt-dlp pick the extension
 	reserved, err := newTempMediaFile("ytdlp-*.mp4")
 	if err != nil {
-		return nil, err
+		return Media{}, err
 	}
 	_ = os.Remove(reserved)
 	base := strings.TrimSuffix(reserved, ".mp4")
@@ -85,6 +148,8 @@ func (ex *YtDlpExtractor) Extract(ctx context.Context, mediaURL string) ([]strin
 		"--merge-output-format", "mp4",
 		"--remux-video", "mp4",
 		"-o", base + ".%(ext)s",
+		// the info line comes first and the file path last
+		"--print", ytDlpInfoTemplate,
 		"--print", "after_move:filepath",
 	}
 	if ex.Proxy != "" {
@@ -107,10 +172,10 @@ func (ex *YtDlpExtractor) Extract(ctx context.Context, mediaURL string) ([]strin
 		msg := lastLine(stderr.String())
 		if ytDlpNoVideo(msg) {
 			err = fmt.Errorf("yt-dlp: %s: %w", msg, ErrNoVideo)
-			return nil, err
+			return Media{}, err
 		}
 		err = fmt.Errorf("running yt-dlp: %w: %s", err, msg)
-		return nil, err
+		return Media{}, err
 	}
 
 	path := lastLine(stdout.String())
@@ -118,14 +183,14 @@ func (ex *YtDlpExtractor) Extract(ctx context.Context, mediaURL string) ([]strin
 		// e.g. skipped because of --max-filesize
 		removeMatching(base + "*")
 		err = fmt.Errorf("yt-dlp produced no file: %s", lastLine(stderr.String()))
-		return nil, err
+		return Media{}, err
 	}
 	if !isTempMediaFile(path) {
 		err = fmt.Errorf("yt-dlp wrote outside the temp media dir: %s", path)
-		return nil, err
+		return Media{}, err
 	}
 
-	return []string{"file://" + path}, nil
+	return Media{URLs: []string{"file://" + path}, Metadata: parseYtDlpInfo(stdout.String())}, nil
 }
 
 // ytDlpNoVideo reports whether yt-dlp loaded the post and found no video in it

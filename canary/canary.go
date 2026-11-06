@@ -55,7 +55,8 @@ type Item struct {
 	// set once tested
 	Status    string // pending / ok / no_video / failed
 	TestedAt  time.Time
-	Extractor string // the extractor that produced the media, when it succeeded
+	Extractor string            // the extractor that produced the media, when it succeeded
+	Metadata  *preview.Metadata // what the extractors knew about the post, when tested and found
 	Duration  time.Duration
 	TraceID   string
 	Error     string
@@ -218,10 +219,9 @@ func (r *Runner) check(ctx context.Context, it Item) {
 		attribute.String("site", it.Site),
 	)
 
-	// Reupload also tags this span with preview.site / preview.extractor
-	var info preview.ReuploadInfo
+	// Reupload also tags this span with preview.site / preview.extractor / preview.metadata
 	start := time.Now()
-	files, err := r.Reuploader.Reupload(preview.WithReuploadInfo(ctx, &info), it.URL)
+	res, err := r.Reuploader.Reupload(ctx, it.URL)
 	took := time.Since(start)
 
 	status := "ok"
@@ -234,7 +234,7 @@ func (r *Runner) check(ctx context.Context, it Item) {
 	}
 	span.SetAttributes(
 		attribute.String("canary.outcome", status),
-		attribute.Int("canary.files", len(files)),
+		attribute.Int("canary.files", len(res.Links)),
 	)
 
 	traceID := span.SpanContext().TraceID().String()
@@ -242,7 +242,8 @@ func (r *Runner) check(ctx context.Context, it Item) {
 	if stored := r.items[it.URL]; stored != nil {
 		stored.Status = status
 		stored.TestedAt = start
-		stored.Extractor = info.Extractor
+		stored.Extractor = res.Extractor
+		stored.Metadata = res.Metadata
 		stored.Duration = took
 		stored.TraceID = traceID
 		if err != nil {
@@ -254,6 +255,6 @@ func (r *Runner) check(ctx context.Context, it Item) {
 	if status == "failed" {
 		fmt.Printf("canary: FAIL trace=%s site=%s url=%s after=%s err=%v\n", traceID, it.Site, it.URL, took.Round(time.Millisecond), err)
 	} else {
-		fmt.Printf("canary: %s trace=%s site=%s extractor=%s url=%s after=%s\n", status, traceID, it.Site, info.Extractor, it.URL, took.Round(time.Millisecond))
+		fmt.Printf("canary: %s trace=%s site=%s extractor=%s metadata=%t url=%s after=%s\n", status, traceID, it.Site, res.Extractor, !res.Metadata.Empty(), it.URL, took.Round(time.Millisecond))
 	}
 }

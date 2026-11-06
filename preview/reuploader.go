@@ -22,17 +22,12 @@ import (
 
 var errMediaTooLarge = errors.New("remote media is too large")
 
-// ReuploadInfo reports how a Reupload went, beyond its returned links.
-type ReuploadInfo struct {
-	Extractor string // the extractor that produced the media; empty on a cache hit
+// Result is what Reupload produced.
+type Result struct {
+	Links     []string  // permalinks to the reuploaded media
+	Metadata  *Metadata // what an extractor knows about the post; nil when none did
+	Extractor string    // the extractor that produced the media; empty on a cache hit
 	CacheHit  bool
-}
-
-type reuploadInfoKey struct{}
-
-// WithReuploadInfo makes Reupload fill info in.
-func WithReuploadInfo(ctx context.Context, info *ReuploadInfo) context.Context {
-	return context.WithValue(ctx, reuploadInfoKey{}, info)
 }
 
 type Reuploader struct {
@@ -45,6 +40,7 @@ type Manifest struct {
 	CreatedAt time.Time `json:"created_at"`
 	SourceURL string    `json:"source_url"`
 	Files     []string  `json:"files"`
+	Metadata  *Metadata `json:"metadata,omitempty"` // absent in manifests from before it was stored
 }
 
 func (reup *Reuploader) IsSupported(mediaURL string) bool {
@@ -56,25 +52,26 @@ func (reup *Reuploader) IsSupported(mediaURL string) bool {
 	return false
 }
 
-func (reup *Reuploader) Reupload(ctx context.Context, mediaURL string) ([]string, error) {
-	var err error
+func (reup *Reuploader) Reupload(ctx context.Context, mediaURL string) (res Result, err error) {
 	// also tag the caller's span (discord_reply / discord_command) so a trace
 	// can be filtered by site, extractor and cache outcome from its root
 	parent := trace.SpanFromContext(ctx)
 	ctx, span := tracer.Start(ctx, "reupload")
 	defer tr.End(span, &err)
-	info, _ := ctx.Value(reuploadInfoKey{}).(*ReuploadInfo)
-	if info == nil {
-		info = &ReuploadInfo{}
-	}
 	setAttrs := func(kv ...attribute.KeyValue) {
 		span.SetAttributes(kv...)
 		parent.SetAttributes(kv...)
 	}
+	setMetadataAttrs := func(m *Metadata) {
+		setAttrs(attribute.Bool("preview.metadata", !m.Empty()))
+		if !m.Empty() {
+			setAttrs(attribute.String("preview.metadata_source", m.Source))
+		}
+	}
 
 	cleanURL, err := cleanURLParams(mediaURL, allowedParams)
 	if err != nil {
-		return nil, err
+		return Result{}, err
 	}
 	mediaID := sha12(cleanURL)
 
@@ -85,46 +82,96 @@ func (reup *Reuploader) Reupload(ctx context.Context, mediaURL string) ([]string
 	manifest, err := reup.getManifest(ctx, mediaID)
 	if err != nil {
 		if !errors.Is(err, fs.ErrNotExist) {
-			return nil, fmt.Errorf("getting manifest: %w", err)
+			return Result{}, fmt.Errorf("getting manifest: %w", err)
 		}
 	} else {
-		info.CacheHit = true
 		setAttrs(attribute.Bool("preview.cache_hit", true), attribute.Int("preview.files", len(manifest.Files)))
-		permalinks := reup.formatPermalinks(manifest.Files)
-		return permalinks, nil
+		setMetadataAttrs(manifest.Metadata)
+		return Result{Links: reup.formatPermalinks(manifest.Files), Metadata: manifest.Metadata, CacheHit: true}, nil
 	}
 
 	// slow path:
 	setAttrs(attribute.Bool("preview.cache_hit", false))
-	remoteURLs, extractor, err := reup.extract(ctx, cleanURL)
+	media, extractor, err := reup.extract(ctx, cleanURL)
 	if err != nil {
-		return nil, fmt.Errorf("extracting: %w", err)
+		return Result{}, fmt.Errorf("extracting: %w", err)
 	}
-	info.Extractor = extractor
 	setAttrs(attribute.String("preview.extractor", extractor))
 
-	filenames, err := reup.transferMany(ctx, remoteURLs, mediaID)
-	if err != nil {
-		return nil, fmt.Errorf("reuploading: %w", err)
+	// when the extractor that won didn't know the post's details, ask the ones
+	// that can while the media transfers
+	var metaCh chan *Metadata
+	if media.Metadata.Empty() {
+		metaCh = make(chan *Metadata, 1)
+		go func() { metaCh <- reup.fetchMetadata(ctx, cleanURL, extractor) }()
 	}
+
+	filenames, err := reup.transferMany(ctx, media.URLs, mediaID)
+	if err != nil {
+		return Result{}, fmt.Errorf("reuploading: %w", err)
+	}
+
+	metadata := media.Metadata
+	if metaCh != nil {
+		metadata = <-metaCh
+	}
+	if metadata != nil && metadata.Source == "" {
+		metadata.Source = extractor
+	}
+	setMetadataAttrs(metadata)
 
 	manifest = Manifest{
 		CreatedAt: time.Now().UTC(),
 		SourceURL: cleanURL,
 		Files:     filenames,
+		Metadata:  metadata,
 	}
 	err = reup.uploadManifest(ctx, mediaID, manifest)
 	if err != nil {
-		return nil, fmt.Errorf("uploading manifest: %w", err)
+		return Result{}, fmt.Errorf("uploading manifest: %w", err)
 	}
 
 	setAttrs(attribute.Int("preview.files", len(manifest.Files)))
-	permalinks := reup.formatPermalinks(manifest.Files)
-	return permalinks, nil
+	return Result{Links: reup.formatPermalinks(manifest.Files), Metadata: metadata, Extractor: extractor}, nil
 }
 
-// extract returns the remote urls and the name of the extractor that produced them.
-func (reup *Reuploader) extract(ctx context.Context, mediaURL string) (remoteURLs []string, used string, err error) {
+// metadataTimeout bounds asking providers for a post's details; the reply
+// shouldn't wait on them for long.
+const metadataTimeout = 10 * time.Second
+
+// fetchMetadata asks the extractors that can describe a post (except skip,
+// which just ran) in order, and returns the first answer with anything in it.
+// It never fails: a post with no metadata still gets its media.
+func (reup *Reuploader) fetchMetadata(ctx context.Context, mediaURL, skip string) *Metadata {
+	ctx, cancel := context.WithTimeout(ctx, metadataTimeout)
+	defer cancel()
+	ctx, span := tracer.Start(ctx, "fetch_metadata")
+	defer span.End()
+
+	for _, extractor := range reup.Extractors {
+		provider, ok := extractor.(MetadataProvider)
+		name := extractorName(extractor)
+		if !ok || name == skip || !extractor.IsSupported(mediaURL) {
+			continue
+		}
+		m, err := provider.Metadata(ctx, mediaURL)
+		if err != nil {
+			span.AddEvent("provider_failed", trace.WithAttributes(
+				attribute.String("provider", name),
+				attribute.String("error", truncate(err.Error(), 500)),
+			))
+			continue
+		}
+		if !m.Empty() {
+			span.SetAttributes(attribute.String("metadata.source", name))
+			return m
+		}
+	}
+	return nil
+}
+
+// extract returns the media and the name of the extractor that produced it.
+func (reup *Reuploader) extract(ctx context.Context, mediaURL string) (media Media, used string, err error) {
 	ctx, span := tracer.Start(ctx, "extract")
 	defer tr.End(span, &err)
 	span.SetAttributes(attribute.String("site", siteOf(mediaURL)))
@@ -138,10 +185,10 @@ func (reup *Reuploader) extract(ctx context.Context, mediaURL string) (remoteURL
 		if extractor.IsSupported(mediaURL) {
 			name := extractorName(extractor)
 			attempted = append(attempted, name)
-			remoteURLs, err = extractor.Extract(ctx, mediaURL)
+			media, err = extractMedia(ctx, extractor, mediaURL)
 			if errors.Is(err, ErrNoVideo) {
 				span.SetAttributes(attribute.Bool("extractor.no_video", true))
-				return nil, "", fmt.Errorf("extracting media: %s: %w", mediaURL, err)
+				return Media{}, "", fmt.Errorf("extracting media: %s: %w", mediaURL, err)
 			}
 			if err != nil {
 				span.AddEvent("extractor_failed", trace.WithAttributes(
@@ -152,15 +199,15 @@ func (reup *Reuploader) extract(ctx context.Context, mediaURL string) (remoteURL
 				continue
 			}
 			span.SetAttributes(attribute.String("extractor.used", name))
-			return remoteURLs, name, nil
+			return media, name, nil
 		}
 	}
 
 	if len(errs) == 0 {
-		return nil, "", fmt.Errorf("no extractors matching: %s", mediaURL)
+		return Media{}, "", fmt.Errorf("no extractors matching: %s", mediaURL)
 	}
 
-	return nil, "", fmt.Errorf("extracting media: %s: %w", mediaURL, errors.Join(errs...))
+	return Media{}, "", fmt.Errorf("extracting media: %s: %w", mediaURL, errors.Join(errs...))
 }
 
 func (reup *Reuploader) transferMany(ctx context.Context, remoteURLs []string, mediaID string) (_ []string, err error) {
