@@ -247,3 +247,6 @@ func detectContentType(body []byte) string {
 	}
 	return http.DetectContentType(body)
 }
+
+// SiteOf is siteOf for other packages.
+func SiteOf(rawURL string) string { return siteOf(rawURL) }

@@ -22,6 +22,19 @@ import (
 
 var errMediaTooLarge = errors.New("remote media is too large")
 
+// ReuploadInfo reports how a Reupload went, beyond its returned links.
+type ReuploadInfo struct {
+	Extractor string // the extractor that produced the media; empty on a cache hit
+	CacheHit  bool
+}
+
+type reuploadInfoKey struct{}
+
+// WithReuploadInfo makes Reupload fill info in.
+func WithReuploadInfo(ctx context.Context, info *ReuploadInfo) context.Context {
+	return context.WithValue(ctx, reuploadInfoKey{}, info)
+}
+
 type Reuploader struct {
 	Extractors  []Extractor
 	Destination Destination
@@ -50,6 +63,10 @@ func (reup *Reuploader) Reupload(ctx context.Context, mediaURL string) ([]string
 	parent := trace.SpanFromContext(ctx)
 	ctx, span := tracer.Start(ctx, "reupload")
 	defer tr.End(span, &err)
+	info, _ := ctx.Value(reuploadInfoKey{}).(*ReuploadInfo)
+	if info == nil {
+		info = &ReuploadInfo{}
+	}
 	setAttrs := func(kv ...attribute.KeyValue) {
 		span.SetAttributes(kv...)
 		parent.SetAttributes(kv...)
@@ -71,6 +88,7 @@ func (reup *Reuploader) Reupload(ctx context.Context, mediaURL string) ([]string
 			return nil, fmt.Errorf("getting manifest: %w", err)
 		}
 	} else {
+		info.CacheHit = true
 		setAttrs(attribute.Bool("preview.cache_hit", true), attribute.Int("preview.files", len(manifest.Files)))
 		permalinks := reup.formatPermalinks(manifest.Files)
 		return permalinks, nil
@@ -82,6 +100,7 @@ func (reup *Reuploader) Reupload(ctx context.Context, mediaURL string) ([]string
 	if err != nil {
 		return nil, fmt.Errorf("extracting: %w", err)
 	}
+	info.Extractor = extractor
 	setAttrs(attribute.String("preview.extractor", extractor))
 
 	filenames, err := reup.transferMany(ctx, remoteURLs, mediaID)
