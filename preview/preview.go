@@ -80,6 +80,17 @@ func NewExtractor(config *url.URL) (ex Extractor, err error) {
 		ex, err = NewBrightData(config)
 	case "ytdlp":
 		ex, err = NewYtDlp(config)
+	case "fxtwitter":
+		ex, err = NewFxTwitter(config)
+	case "tikwm":
+		ex, err = NewTikWM(config)
+	// browser-scraping extractors take no options
+	case "fastdl":
+		ex = &FastDLExtractor{}
+	case "ssstik":
+		ex = &SSSTikExtractor{}
+	case "reelsvideo":
+		ex = &ReelsVideoExtractor{}
 	default:
 		err = fmt.Errorf("unknown extractor: %s", config.Scheme)
 	}

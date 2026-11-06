@@ -79,12 +79,6 @@ func run(ctx context.Context, args Args) error {
 		}
 	}
 
-	extractors = append(extractors,
-		&preview.FastDLExtractor{},
-		&preview.SSSTikExtractor{},
-		&preview.ReelsVideoExtractor{},
-	)
-
 	dest, err := preview.NewDestination(ctx, args.Destination)
 	if err != nil {
 		return fmt.Errorf("creating destination: %w", err)
