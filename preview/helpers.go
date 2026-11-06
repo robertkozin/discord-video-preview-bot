@@ -23,8 +23,12 @@ import (
 
 var (
 	httpClient *http.Client
-	cookieJar  *cookiejar.Jar
-	userAgent  = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/139.0.0.0 Safari/537.36"
+	// mediaClient downloads media. It has no total timeout, since a big file
+	// over a slow link (a mobile proxy) legitimately takes a while; downloadHttp
+	// ends a download that stops making progress instead.
+	mediaClient *http.Client
+	cookieJar   *cookiejar.Jar
+	userAgent   = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/139.0.0.0 Safari/537.36"
 )
 
 func init() {
@@ -35,11 +39,21 @@ func init() {
 		Timeout:   30 * time.Second,
 		Jar:       cookieJar,
 	}
+
+	mediaTransport := http.DefaultTransport.(*http.Transport).Clone()
+	mediaTransport.ResponseHeaderTimeout = 30 * time.Second
+	mediaClient = &http.Client{Transport: mediaTransport, Jar: cookieJar}
 }
 
 func httpGet(ctx context.Context, url string) (*http.Response, error) {
 	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	return httpDo(req)
+}
+
+// httpGetMedia is httpGet for downloading media, see mediaClient.
+func httpGetMedia(ctx context.Context, url string) (*http.Response, error) {
+	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	return httpDoWith(mediaClient, req)
 }
 
 func httpDo(req *http.Request) (*http.Response, error) {

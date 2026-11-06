@@ -22,6 +22,16 @@ import (
 
 var errMediaTooLarge = errors.New("remote media is too large")
 
+// errDownloadStalled means a download stopped receiving data.
+var errDownloadStalled = errors.New("download stalled")
+
+var (
+	// downloadIdleTimeout is how long a download may go without receiving a
+	// byte, and downloadMaxTime is the longest it may take in total.
+	downloadIdleTimeout = 30 * time.Second
+	downloadMaxTime     = 5 * time.Minute
+)
+
 // Result is what Reupload produced.
 type Result struct {
 	Links     []string  // permalinks to the reuploaded media
@@ -282,7 +292,13 @@ func fetchMedia(ctx context.Context, remoteURL string) ([]byte, string, error) {
 		err = fmt.Errorf("downloading media to memory: %w", err)
 	}
 
-	if errors.Is(err, errMediaTooLarge) || !strings.HasPrefix(remoteURL, "http") {
+	// The ffmpeg fallback is for media the downloader got but couldn't use. It
+	// would only fetch the same url a second time after a failure of the
+	// connection itself (too slow, too large, cancelled), which on a metered or
+	// slow link doubles the cost and the wait.
+	if errors.Is(err, errMediaTooLarge) || errors.Is(err, errDownloadStalled) ||
+		errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) ||
+		!strings.HasPrefix(remoteURL, "http") {
 		return nil, "", err
 	}
 
@@ -335,12 +351,50 @@ func downloadFile(path string) ([]byte, error) {
 	return readAll(file, stat.Size())
 }
 
+// downloadHttp downloads remoteURL into memory. It gives up when no data has
+// arrived for downloadIdleTimeout, or after downloadMaxTime in total, so a slow
+// but steady stream keeps going.
 func downloadHttp(ctx context.Context, remoteURL string) ([]byte, error) {
-	resp, err := httpGet(ctx, remoteURL)
+	ctx, cancelTotal := context.WithTimeout(ctx, downloadMaxTime)
+	defer cancelTotal()
+	ctx, cancel := context.WithCancelCause(ctx)
+	defer cancel(nil)
+	idle := time.AfterFunc(downloadIdleTimeout, func() {
+		cancel(fmt.Errorf("%w: no data for %s", errDownloadStalled, downloadIdleTimeout))
+	})
+	defer idle.Stop()
+
+	body, err := downloadHttpBody(ctx, remoteURL, idle)
+	if err != nil {
+		if cause := context.Cause(ctx); errors.Is(cause, errDownloadStalled) {
+			return nil, cause
+		}
+		return nil, err
+	}
+	return body, nil
+}
+
+// idleReader pushes the idle timer back on every read that returns data.
+type idleReader struct {
+	r    io.Reader
+	idle *time.Timer
+}
+
+func (ir idleReader) Read(p []byte) (int, error) {
+	n, err := ir.r.Read(p)
+	if n > 0 {
+		ir.idle.Reset(downloadIdleTimeout)
+	}
+	return n, err
+}
+
+func downloadHttpBody(ctx context.Context, remoteURL string, idle *time.Timer) ([]byte, error) {
+	resp, err := httpGetMedia(ctx, remoteURL)
 	if err != nil {
 		return nil, fmt.Errorf("fetching remote url: %w", err)
 	}
 	defer resp.Body.Close()
+	idle.Reset(downloadIdleTimeout) // headers arrived
 
 	if resp.StatusCode != 200 {
 		return nil, fmt.Errorf("unexpected error fetching remote url: %s", resp.Status)
@@ -350,7 +404,7 @@ func downloadHttp(ctx context.Context, remoteURL string) ([]byte, error) {
 		return nil, fmt.Errorf("%w: %d bytes", errMediaTooLarge, resp.ContentLength)
 	}
 
-	return readAll(resp.Body, resp.ContentLength)
+	return readAll(idleReader{r: resp.Body, idle: idle}, resp.ContentLength)
 }
 
 func readAll(reader io.Reader, size int64) (body []byte, err error) {
@@ -358,7 +412,11 @@ func readAll(reader io.Reader, size int64) (body []byte, err error) {
 		body = make([]byte, size)
 		_, err = io.ReadFull(reader, body)
 	} else if size < 0 {
-		body, err = io.ReadAll(reader)
+		// no Content-Length (e.g. a tunnel): cap it so a runaway stream can't fill memory
+		body, err = io.ReadAll(io.LimitReader(reader, MaxMediaSize+1))
+		if err == nil && len(body) > MaxMediaSize {
+			return nil, fmt.Errorf("%w: more than %d bytes", errMediaTooLarge, MaxMediaSize)
+		}
 	} else {
 		err = fmt.Errorf("read all: expecting a non-zero size")
 	}
