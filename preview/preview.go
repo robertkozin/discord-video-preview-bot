@@ -91,6 +91,8 @@ func NewExtractor(config *url.URL) (ex Extractor, err error) {
 		ex, err = NewTikWM(config)
 	case "instafix":
 		ex, err = NewInstaFix(config)
+	case "reddit":
+		ex, err = NewReddit(config)
 	// browser-scraping extractors take no options
 	case "fastdl":
 		ex = &FastDLExtractor{}

@@ -7,13 +7,11 @@ import (
 	"io"
 	"net/http"
 	"net/url"
-	"os"
 	"strings"
-	"sync"
 	"time"
-)
 
-const redditUserAgent = "linux:discord-video-preview-canary:v1 (homelab link tester)"
+	"github.com/robertkozin/discord-video-preview-bot/preview"
+)
 
 var defaultRedditDomains = []string{"v.redd.it", "x.com", "tiktok.com", "instagram.com"}
 
@@ -33,24 +31,17 @@ type Reddit struct {
 	Sort    string // hot, new, top, rising
 	Limit   int
 
-	client                               *http.Client
-	clientID, clientSecret, refreshToken string
-
-	mu          sync.Mutex
-	accessToken string
-	tokenExpiry time.Time
+	client *http.Client
+	auth   *preview.RedditAuth
 }
 
 func NewReddit(config *url.URL) (*Reddit, error) {
 	q := config.Query()
 	r := &Reddit{
-		Domains:      q["domains"],
-		Sort:         q.Get("sort"),
-		Limit:        50,
-		client:       &http.Client{Timeout: 20 * time.Second},
-		clientID:     os.Getenv("REDDIT_CLIENT_ID"),
-		clientSecret: os.Getenv("REDDIT_CLIENT_SECRET"),
-		refreshToken: os.Getenv("REDDIT_REFRESH_TOKEN"),
+		Domains: q["domains"],
+		Sort:    q.Get("sort"),
+		Limit:   50,
+		client:  &http.Client{Timeout: 20 * time.Second},
 	}
 	if len(r.Domains) == 0 {
 		r.Domains = defaultRedditDomains
@@ -68,50 +59,15 @@ func NewReddit(config *url.URL) (*Reddit, error) {
 	default:
 		return nil, fmt.Errorf("unknown reddit sort %q", r.Sort)
 	}
-	if r.clientID == "" || r.clientSecret == "" || r.refreshToken == "" {
-		return nil, fmt.Errorf("reddit source needs REDDIT_CLIENT_ID, REDDIT_CLIENT_SECRET and REDDIT_REFRESH_TOKEN")
+	auth, err := preview.NewRedditAuthFromEnv()
+	if err != nil {
+		return nil, err
 	}
+	r.auth = auth
 	return r, nil
 }
 
 func (r *Reddit) String() string { return "reddit" }
-
-func (r *Reddit) token(ctx context.Context) (string, error) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	if r.accessToken != "" && time.Until(r.tokenExpiry) > 5*time.Minute {
-		return r.accessToken, nil
-	}
-
-	form := url.Values{"grant_type": {"refresh_token"}, "refresh_token": {r.refreshToken}}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, "https://www.reddit.com/api/v1/access_token", strings.NewReader(form.Encode()))
-	if err != nil {
-		return "", err
-	}
-	req.SetBasicAuth(r.clientID, r.clientSecret)
-	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	req.Header.Set("User-Agent", redditUserAgent)
-
-	resp, err := r.client.Do(req)
-	if err != nil {
-		return "", fmt.Errorf("refreshing reddit token: %w", err)
-	}
-	defer resp.Body.Close()
-	var tok struct {
-		AccessToken string `json:"access_token"`
-		ExpiresIn   int    `json:"expires_in"`
-		Error       string `json:"error"`
-	}
-	if err := json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(&tok); err != nil {
-		return "", fmt.Errorf("refreshing reddit token: %s: %w", resp.Status, err)
-	}
-	if resp.StatusCode != http.StatusOK || tok.AccessToken == "" {
-		return "", fmt.Errorf("refreshing reddit token: %s %s", resp.Status, tok.Error)
-	}
-	r.accessToken = tok.AccessToken
-	r.tokenExpiry = time.Now().Add(time.Duration(tok.ExpiresIn) * time.Second)
-	return r.accessToken, nil
-}
 
 type redditListing struct {
 	Data struct {
@@ -133,7 +89,7 @@ type redditListing struct {
 // Fetch returns links from every domain's listing. A domain that fails is
 // reported in the error, and the others' links are still returned.
 func (r *Reddit) Fetch(ctx context.Context) ([]Link, error) {
-	token, err := r.token(ctx)
+	token, err := r.auth.Token(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -187,7 +143,7 @@ func (r *Reddit) listing(ctx context.Context, token, domain string) (listing red
 		return listing, err
 	}
 	req.Header.Set("Authorization", "bearer "+token)
-	req.Header.Set("User-Agent", redditUserAgent)
+	req.Header.Set("User-Agent", preview.RedditUserAgent)
 
 	resp, err := r.client.Do(req)
 	if err != nil {
