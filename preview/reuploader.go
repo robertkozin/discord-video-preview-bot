@@ -25,6 +25,10 @@ var errMediaTooLarge = errors.New("remote media is too large")
 // errDownloadStalled means a download stopped receiving data.
 var errDownloadStalled = errors.New("download stalled")
 
+// errEmptyMedia means the server answered with an empty body, e.g. a cobalt
+// tunnel whose upstream fetch failed.
+var errEmptyMedia = errors.New("remote media is empty")
+
 var (
 	// downloadIdleTimeout is how long a download may go without receiving a
 	// byte, and downloadMaxTime is the longest it may take in total.
@@ -100,25 +104,52 @@ func (reup *Reuploader) Reupload(ctx context.Context, mediaURL string) (res Resu
 		return Result{Links: reup.formatPermalinks(manifest.Files), Metadata: manifest.Metadata, CacheHit: true}, nil
 	}
 
-	// slow path:
+	// slow path: the first extractor whose media also transfers wins. An
+	// extractor can hand out urls that then fail to download (e.g. a cobalt
+	// tunnel that answers with an empty body), so a failed transfer moves on to
+	// the next extractor instead of failing the reupload.
 	setAttrs(attribute.Bool("preview.cache_hit", false))
-	media, extractor, err := reup.extract(ctx, cleanURL)
-	if err != nil {
-		return Result{}, fmt.Errorf("extracting: %w", err)
-	}
-	setAttrs(attribute.String("preview.extractor", extractor))
+	var (
+		media        Media
+		extractor    string
+		filenames    []string
+		metaCh       chan *Metadata
+		transferErrs []error
+	)
+	for next := 0; ; {
+		media, extractor, next, err = reup.extract(ctx, cleanURL, next)
+		if err != nil {
+			if len(transferErrs) > 0 {
+				err = errors.Join(append(transferErrs, err)...)
+			}
+			return Result{}, fmt.Errorf("extracting: %w", err)
+		}
+		setAttrs(attribute.String("preview.extractor", extractor))
 
-	// when the extractor that won didn't know the post's details, ask the ones
-	// that can while the media transfers
-	var metaCh chan *Metadata
-	if media.Metadata.Empty() {
-		metaCh = make(chan *Metadata, 1)
-		go func() { metaCh <- reup.fetchMetadata(ctx, cleanURL, extractor) }()
-	}
+		// when the extractor that won didn't know the post's details, ask the
+		// ones that can while the media transfers
+		metaCh = nil
+		if media.Metadata.Empty() {
+			metaCh = make(chan *Metadata, 1)
+			go func(skip string) { metaCh <- reup.fetchMetadata(ctx, cleanURL, skip) }(extractor)
+		}
 
-	filenames, err := reup.transferMany(ctx, media.URLs, mediaID)
-	if err != nil {
-		return Result{}, fmt.Errorf("reuploading: %w", err)
+		filenames, err = reup.transferMany(ctx, media.URLs, mediaID)
+		if err == nil {
+			break
+		}
+		err = fmt.Errorf("reuploading from %s: %w", extractor, err)
+		if ctx.Err() != nil {
+			return Result{}, err
+		}
+		span.AddEvent("transfer_failed", trace.WithAttributes(
+			attribute.String("extractor", extractor),
+			attribute.String("error", truncate(err.Error(), 500)),
+		))
+		transferErrs = append(transferErrs, err)
+	}
+	if len(transferErrs) > 0 {
+		setAttrs(attribute.Int("preview.transfer_fallbacks", len(transferErrs)))
 	}
 
 	metadata := media.Metadata
@@ -180,8 +211,10 @@ func (reup *Reuploader) fetchMetadata(ctx context.Context, mediaURL, skip string
 	return nil
 }
 
-// extract returns the media and the name of the extractor that produced it.
-func (reup *Reuploader) extract(ctx context.Context, mediaURL string) (media Media, used string, err error) {
+// extract tries the extractors from index from on, and returns the media, the
+// name of the extractor that produced it and the index to continue from when
+// that media turns out to be unusable.
+func (reup *Reuploader) extract(ctx context.Context, mediaURL string, from int) (media Media, used string, next int, err error) {
 	ctx, span := tracer.Start(ctx, "extract")
 	defer tr.End(span, &err)
 	span.SetAttributes(attribute.String("site", siteOf(mediaURL)))
@@ -191,14 +224,15 @@ func (reup *Reuploader) extract(ctx context.Context, mediaURL string) (media Med
 	defer func() {
 		span.SetAttributes(attribute.StringSlice("extractor.attempted", attempted))
 	}()
-	for _, extractor := range reup.Extractors {
+	for i := from; i < len(reup.Extractors); i++ {
+		extractor := reup.Extractors[i]
 		if extractor.IsSupported(mediaURL) {
 			name := extractorName(extractor)
 			attempted = append(attempted, name)
 			media, err = extractMedia(ctx, extractor, mediaURL)
 			if errors.Is(err, ErrNoVideo) {
 				span.SetAttributes(attribute.Bool("extractor.no_video", true))
-				return Media{}, "", fmt.Errorf("extracting media: %s: %w", mediaURL, err)
+				return Media{}, "", 0, fmt.Errorf("extracting media: %s: %w", mediaURL, err)
 			}
 			if err != nil {
 				span.AddEvent("extractor_failed", trace.WithAttributes(
@@ -209,15 +243,18 @@ func (reup *Reuploader) extract(ctx context.Context, mediaURL string) (media Med
 				continue
 			}
 			span.SetAttributes(attribute.String("extractor.used", name))
-			return media, name, nil
+			return media, name, i + 1, nil
 		}
 	}
 
 	if len(errs) == 0 {
-		return Media{}, "", fmt.Errorf("no extractors matching: %s", mediaURL)
+		if from > 0 {
+			return Media{}, "", 0, fmt.Errorf("no more extractors to try: %s", mediaURL)
+		}
+		return Media{}, "", 0, fmt.Errorf("no extractors matching: %s", mediaURL)
 	}
 
-	return Media{}, "", fmt.Errorf("extracting media: %s: %w", mediaURL, errors.Join(errs...))
+	return Media{}, "", 0, fmt.Errorf("extracting media: %s: %w", mediaURL, errors.Join(errs...))
 }
 
 func (reup *Reuploader) transferMany(ctx context.Context, remoteURLs []string, mediaID string) (_ []string, err error) {
@@ -295,8 +332,9 @@ func fetchMedia(ctx context.Context, remoteURL string) ([]byte, string, error) {
 	// The ffmpeg fallback is for media the downloader got but couldn't use. It
 	// would only fetch the same url a second time after a failure of the
 	// connection itself (too slow, too large, cancelled), which on a metered or
-	// slow link doubles the cost and the wait.
-	if errors.Is(err, errMediaTooLarge) || errors.Is(err, errDownloadStalled) ||
+	// slow link doubles the cost and the wait, or after an empty body, which
+	// ffmpeg can't open either.
+	if errors.Is(err, errMediaTooLarge) || errors.Is(err, errDownloadStalled) || errors.Is(err, errEmptyMedia) ||
 		errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) ||
 		!strings.HasPrefix(remoteURL, "http") {
 		return nil, "", err
@@ -418,7 +456,7 @@ func readAll(reader io.Reader, size int64) (body []byte, err error) {
 			return nil, fmt.Errorf("%w: more than %d bytes", errMediaTooLarge, MaxMediaSize)
 		}
 	} else {
-		err = fmt.Errorf("read all: expecting a non-zero size")
+		err = errEmptyMedia
 	}
 
 	return body, err

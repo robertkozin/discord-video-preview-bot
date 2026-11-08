@@ -45,6 +45,7 @@ func (c *CobaltExtractor) IsSupported(url string) bool {
 	return simpleURLMatch(url, []string{
 		"instagram.com/reel/*",
 		"instagram.com/reels/*",
+		"instagram.com/p/*",
 		"tiktok.com/t/*",
 		"tiktok.com/@*/video/*",
 		"*.tiktok.com/*",

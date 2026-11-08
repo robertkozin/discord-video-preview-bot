@@ -28,6 +28,10 @@ var tracer = otel.Tracer("canary")
 const (
 	maxItems     = 300 // links kept in memory
 	checkTimeout = 4 * time.Minute
+	// testedTTL is how long a tested link is remembered after trim drops it,
+	// so a source that still lists it (a hot listing changes slowly) doesn't
+	// bring it back as a new link to test again.
+	testedTTL = 48 * time.Hour
 )
 
 // Link is a candidate link and what its source knows about it.
@@ -69,8 +73,9 @@ type Runner struct {
 	RefreshInterval time.Duration       // between fetching new links
 
 	mu         sync.Mutex
-	items      map[string]*Item // by URL
-	lastTested map[string]time.Time
+	items      map[string]*Item     // by URL
+	lastTested map[string]time.Time // by site
+	tested     map[string]time.Time // by URL: every link tested within testedTTL
 }
 
 // Items returns a snapshot of every link held, tested or not.
@@ -88,6 +93,7 @@ func (r *Runner) Run(ctx context.Context) {
 	r.mu.Lock()
 	r.items = map[string]*Item{}
 	r.lastTested = map[string]time.Time{}
+	r.tested = map[string]time.Time{}
 	r.mu.Unlock()
 
 	fmt.Printf("canary: sources=%v check every %s, refresh every %s\n", r.Sources, r.Interval, r.RefreshInterval)
@@ -122,6 +128,7 @@ func (r *Runner) Run(ctx context.Context) {
 // refresh fetches new links from every source and adds the ones that are
 // probably videos and that an extractor supports.
 func (r *Runner) refresh(ctx context.Context) {
+	r.forgetTested()
 	var added, skipped int
 	for _, source := range r.Sources {
 		links, err := source.Fetch(ctx)
@@ -147,9 +154,23 @@ func (r *Runner) add(l Link) bool {
 	if _, ok := r.items[l.URL]; ok {
 		return false
 	}
+	if _, ok := r.tested[l.URL]; ok {
+		return false
+	}
 	r.items[l.URL] = &Item{Link: l, Site: preview.SiteOf(l.URL), FoundAt: time.Now(), Status: "pending"}
 	r.trim()
 	return true
+}
+
+// forgetTested drops tested links older than testedTTL from the tested set.
+func (r *Runner) forgetTested() {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	for u, at := range r.tested {
+		if time.Since(at) > testedTTL {
+			delete(r.tested, u)
+		}
+	}
 }
 
 // trim drops the oldest tested links, then the oldest pending ones, once over maxItems.
@@ -200,6 +221,7 @@ func (r *Runner) pick() (Item, bool) {
 	}
 	chosen.Status = "testing"
 	r.lastTested[chosen.Site] = time.Now()
+	r.tested[chosen.URL] = time.Now()
 	return *chosen, true
 }
 

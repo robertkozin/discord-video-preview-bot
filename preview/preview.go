@@ -66,7 +66,12 @@ type Destination interface {
 }
 
 // extractorName is a short, stable name for trace attributes, e.g. "cobalt".
+// An extractor that can be configured more than once (one per host) names
+// itself with a Name method, e.g. "instafix:eeinstagram.com".
 func extractorName(ex Extractor) string {
+	if named, ok := ex.(interface{ Name() string }); ok {
+		return named.Name()
+	}
 	name := strings.TrimPrefix(fmt.Sprintf("%T", ex), "*preview.")
 	name = strings.TrimSuffix(name, "Extractor")
 	return strings.ToLower(name)
@@ -84,6 +89,8 @@ func NewExtractor(config *url.URL) (ex Extractor, err error) {
 		ex, err = NewFxTwitter(config)
 	case "tikwm":
 		ex, err = NewTikWM(config)
+	case "instafix":
+		ex, err = NewInstaFix(config)
 	// browser-scraping extractors take no options
 	case "fastdl":
 		ex = &FastDLExtractor{}
