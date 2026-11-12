@@ -143,7 +143,7 @@ func (ex *FxTwitterExtractor) Extract(ctx context.Context, mediaURL string) ([]s
 
 func (ex *FxTwitterExtractor) ExtractMedia(ctx context.Context, mediaURL string) (_ Media, err error) {
 	ctx, span := tracer.Start(ctx, "fxtwitter_extract")
-	defer tr.End(span, &err)
+	defer EndSpan(span, &err)
 	span.SetAttributes(attribute.String("site", siteOf(mediaURL)))
 
 	tweet, err := ex.fetch(ctx, mediaURL)

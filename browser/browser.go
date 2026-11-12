@@ -1,9 +1,11 @@
 package browser
 
 import (
+	"errors"
 	"fmt"
 	"net/url"
 	"os"
+	"runtime"
 	"runtime/debug"
 	"slices"
 	"strings"
@@ -122,12 +124,30 @@ func Try[T any](fn func(page *rod.Page) T) (t T, err error) {
 
 	defer func() {
 		if val := recover(); val != nil {
-			err = &rod.TryError{Value: val, Stack: string(debug.Stack())}
+			err = panicError(val)
 		}
 	}()
 	t = fn(page)
 
 	return t, err
+}
+
+// panicError turns a recovered panic into an error. rod's Must* helpers panic
+// with plain errors (a timeout, a failed query) and the extractors panic with
+// strings for messages a site showed; those become ordinary errors, so the
+// message stays short and errors.Is(err, context.DeadlineExceeded) works. Only
+// a real bug (a runtime error such as a nil dereference) keeps its stack.
+func panicError(val any) error {
+	switch v := val.(type) {
+	case runtime.Error:
+		return &rod.TryError{Value: v, Stack: string(debug.Stack())}
+	case error:
+		return v
+	case string:
+		return errors.New(v)
+	default:
+		return fmt.Errorf("%v", v)
+	}
 }
 
 func TryChan[T any](fn func(page *rod.Page, ret chan T)) (t T, err error) {
@@ -141,7 +161,7 @@ func TryChan[T any](fn func(page *rod.Page, ret chan T)) (t T, err error) {
 	go func() {
 		defer func() {
 			if val := recover(); val != nil {
-				err = &rod.TryError{Value: val, Stack: string(debug.Stack())}
+				err = panicError(val)
 			}
 			close(ret)
 		}()

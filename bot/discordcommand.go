@@ -2,9 +2,11 @@ package bot
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"github.com/bwmarrin/discordgo"
+	"github.com/robertkozin/discord-video-preview-bot/preview"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/trace"
@@ -76,8 +78,14 @@ func (b *Discord) respondWithPreview(ctx context.Context, s *discordgo.Session, 
 	))
 	defer func() {
 		if err != nil {
-			span.RecordError(err)
-			span.SetStatus(codes.Error, err.Error())
+			// a link with nothing to download still gets the ephemeral error,
+			// but it isn't a failure of the bot
+			if errors.Is(err, preview.ErrNoVideo) {
+				span.SetAttributes(attribute.Bool("preview.no_video", true))
+			} else {
+				span.RecordError(err)
+				span.SetStatus(codes.Error, err.Error())
+			}
 			b.replaceWithError(s, i, err)
 		}
 		span.End()

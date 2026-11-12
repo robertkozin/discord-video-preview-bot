@@ -2,6 +2,7 @@ package bot
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"regexp"
 	"strings"
@@ -96,6 +97,11 @@ func (b *Discord) replyToMessage(ctx context.Context, s *discordgo.Session, m *d
 	embedCh := b.waitForEmbed(ctx, m)
 
 	res, err := b.Reuploader.Reupload(ctx, url)
+	if errors.Is(err, preview.ErrNoVideo) {
+		// nothing to post (e.g. a text-only tweet), which isn't a failure
+		span.SetAttributes(attribute.Bool("preview.no_video", true))
+		return
+	}
 	if err != nil {
 		span.RecordError(err)
 		span.SetStatus(1, err.Error())

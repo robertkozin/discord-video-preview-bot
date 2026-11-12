@@ -226,9 +226,9 @@ func (r *Runner) pick() (Item, bool) {
 }
 
 // check runs one link through the extractors as its own root trace.
-func (r *Runner) check(ctx context.Context, it Item) {
+func (r *Runner) check(parent context.Context, it Item) {
 	var err error
-	ctx, cancel := context.WithTimeout(ctx, checkTimeout)
+	ctx, cancel := context.WithTimeout(parent, checkTimeout)
 	defer cancel()
 
 	ctx, span := tracer.Start(ctx, "canary_check")
@@ -248,6 +248,18 @@ func (r *Runner) check(ctx context.Context, it Item) {
 
 	status := "ok"
 	switch {
+	case err != nil && parent.Err() != nil:
+		// the bot is shutting down, which says nothing about the extractors:
+		// leave the link to be tested again
+		span.SetAttributes(attribute.String("canary.outcome", "canceled"))
+		err = nil
+		r.mu.Lock()
+		if stored := r.items[it.URL]; stored != nil {
+			stored.Status = "pending"
+		}
+		delete(r.tested, it.URL)
+		r.mu.Unlock()
+		return
 	case errors.Is(err, preview.ErrNoVideo):
 		// the post simply has nothing to download, which isn't an extractor failure
 		status, err = "no_video", nil

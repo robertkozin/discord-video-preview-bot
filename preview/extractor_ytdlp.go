@@ -13,7 +13,6 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/robertkozin/discord-video-preview-bot/tr"
 	"go.opentelemetry.io/otel/attribute"
 )
 
@@ -126,7 +125,7 @@ func parseYtDlpInfo(stdout string) *Metadata {
 
 func (ex *YtDlpExtractor) ExtractMedia(ctx context.Context, mediaURL string) (_ Media, err error) {
 	ctx, span := tracer.Start(ctx, "ytdlp_extract")
-	defer tr.End(span, &err)
+	defer EndSpan(span, &err)
 	span.SetAttributes(attribute.Bool("proxy", ex.Proxy != ""))
 
 	ctx, cancel := context.WithTimeout(ctx, ytDlpTimeout)

@@ -71,7 +71,7 @@ func (reup *Reuploader) Reupload(ctx context.Context, mediaURL string) (res Resu
 	// can be filtered by site, extractor and cache outcome from its root
 	parent := trace.SpanFromContext(ctx)
 	ctx, span := tracer.Start(ctx, "reupload")
-	defer tr.End(span, &err)
+	defer EndSpan(span, &err)
 	setAttrs := func(kv ...attribute.KeyValue) {
 		span.SetAttributes(kv...)
 		parent.SetAttributes(kv...)
@@ -83,7 +83,15 @@ func (reup *Reuploader) Reupload(ctx context.Context, mediaURL string) (res Resu
 		}
 	}
 
-	cleanURL, err := cleanURLParams(mediaURL, allowedParams)
+	// share links can stand for a shop or referral page rather than a video;
+	// resolving them first also gives every extractor (and the cache) the
+	// post's real url
+	resolvedURL, err := resolveTikTokShortLink(ctx, mediaURL)
+	if err != nil {
+		return Result{}, err
+	}
+
+	cleanURL, err := cleanURLParams(resolvedURL, allowedParams)
 	if err != nil {
 		return Result{}, err
 	}
@@ -216,7 +224,7 @@ func (reup *Reuploader) fetchMetadata(ctx context.Context, mediaURL, skip string
 // that media turns out to be unusable.
 func (reup *Reuploader) extract(ctx context.Context, mediaURL string, from int) (media Media, used string, next int, err error) {
 	ctx, span := tracer.Start(ctx, "extract")
-	defer tr.End(span, &err)
+	defer EndSpan(span, &err)
 	span.SetAttributes(attribute.String("site", siteOf(mediaURL)))
 
 	errs := []error{}

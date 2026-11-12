@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"net/url"
 
-	"github.com/robertkozin/discord-video-preview-bot/tr"
 	"go.opentelemetry.io/otel/attribute"
 )
 
@@ -99,7 +98,7 @@ func (ex *CobaltExtractor) Extract(ctx context.Context, url string) (_ []string,
 		headers []string
 	)
 	ctx, span := tracer.Start(ctx, "cobalt_extract")
-	defer tr.End(span, &err)
+	defer EndSpan(span, &err)
 	span.SetAttributes(attribute.String("site", siteOf(url)))
 
 	if ex.APIKey != "" {

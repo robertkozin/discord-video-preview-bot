@@ -9,7 +9,10 @@ import (
 	"net/url"
 	"strings"
 
+	"github.com/robertkozin/discord-video-preview-bot/tr"
 	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/trace"
 )
 
 const (
@@ -52,6 +55,18 @@ func init() {
 // has nothing for any extractor to download, e.g. a text-only tweet. Like
 // fs.SkipAll, it stops the reuploader from trying the remaining extractors.
 var ErrNoVideo = errors.New("link has no video")
+
+// EndSpan closes a span like tr.End, except that ErrNoVideo is an expected
+// outcome rather than a failure: the span keeps an ok status and gets a
+// no_video attribute and event instead, so error searches only show real
+// failures.
+func EndSpan(span trace.Span, err *error) {
+	if err != nil && *err != nil && errors.Is(*err, ErrNoVideo) {
+		span.SetAttributes(attribute.Bool("no_video", true))
+		span.AddEvent("no_video", trace.WithAttributes(attribute.String("reason", truncate((*err).Error(), 500))))
+	}
+	tr.EndIgnore(span, err, ErrNoVideo)
+}
 
 type Extractor interface {
 	IsSupported(mediaURL string) (ok bool)
