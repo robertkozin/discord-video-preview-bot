@@ -23,6 +23,13 @@ var _ Extractor = (*YtDlpExtractor)(nil)
 type YtDlpExtractor struct {
 	// Proxy is passed to --proxy, e.g. http://user:pass@host:port
 	Proxy string
+	// POTProvider is the base url of a bgutil-ytdlp-pot-provider server, which
+	// generates YouTube PO tokens for the bgutil plugin in the image.
+	POTProvider string
+	// YouTubeClients is yt-dlp's youtube player_client list, e.g.
+	// "tv_samsung,mweb" to stay independent of the youtube extractor's
+	// visionos client. Empty is yt-dlp's default.
+	YouTubeClients string
 }
 
 const ytDlpTimeout = 3 * time.Minute
@@ -34,7 +41,13 @@ func NewYtDlp(config *url.URL) (*YtDlpExtractor, error) {
 			return nil, fmt.Errorf("parsing ytdlp proxy: %w", err)
 		}
 	}
-	return &YtDlpExtractor{Proxy: proxy}, nil
+	pot := config.Query().Get("pot")
+	if pot != "" {
+		if _, err := url.Parse(pot); err != nil {
+			return nil, fmt.Errorf("parsing ytdlp pot provider url: %w", err)
+		}
+	}
+	return &YtDlpExtractor{Proxy: proxy, POTProvider: pot, YouTubeClients: config.Query().Get("youtube_clients")}, nil
 }
 
 func (ex *YtDlpExtractor) String() string {
@@ -126,7 +139,7 @@ func parseYtDlpInfo(stdout string) *Metadata {
 func (ex *YtDlpExtractor) ExtractMedia(ctx context.Context, mediaURL string) (_ Media, err error) {
 	ctx, span := tracer.Start(ctx, "ytdlp_extract")
 	defer EndSpan(span, &err)
-	span.SetAttributes(attribute.Bool("proxy", ex.Proxy != ""))
+	span.SetAttributes(attribute.Bool("proxy", ex.Proxy != ""), attribute.Bool("pot_provider", ex.POTProvider != ""))
 
 	ctx, cancel := context.WithTimeout(ctx, ytDlpTimeout)
 	defer cancel()
@@ -153,6 +166,12 @@ func (ex *YtDlpExtractor) ExtractMedia(ctx context.Context, mediaURL string) (_ 
 	}
 	if ex.Proxy != "" {
 		args = append(args, "--proxy", ex.Proxy)
+	}
+	if ex.POTProvider != "" {
+		args = append(args, "--extractor-args", "youtubepot-bgutilhttp:base_url="+ex.POTProvider)
+	}
+	if ex.YouTubeClients != "" {
+		args = append(args, "--extractor-args", "youtube:player_client="+ex.YouTubeClients)
 	}
 	args = append(args, "--", mediaURL)
 

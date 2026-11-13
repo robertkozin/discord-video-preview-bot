@@ -3,13 +3,21 @@ FROM golang:alpine AS builder
 WORKDIR /app
 WORKDIR /build
 
-# Alpine's yt-dlp package lags behind site changes and the extractor runs with
-# --no-update, so install the latest release (a python zipapp). Rebuild with
-# --no-cache to pick up a newer one.
-RUN apk add --no-cache ffmpeg python3 ca-certificates \
-    && wget -q -O /usr/local/bin/yt-dlp https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp \
-    && chmod a+rx /usr/local/bin/yt-dlp \
-    && yt-dlp --version
+# yt-dlp from PyPI (Alpine's package lags behind site changes, and the
+# extractor runs with --no-update) with:
+# - [default], which includes yt-dlp-ejs, plus deno to run it: without a JS
+#   runtime yt-dlp only uses YouTube's visionos client, the same one the
+#   youtube extractor uses, so it would fail together with it
+# - the bgutil PO token plugin; its server is the bgutil-ytdlp-pot-provider
+#   container, keep both on the same version
+# PyPI's yt-dlp metadata changes with each release, so ADDing it invalidates
+# this layer and a plain rebuild picks up the new version.
+ADD https://pypi.org/pypi/yt-dlp/json /tmp/yt-dlp-release.json
+RUN apk add --no-cache ffmpeg python3 ca-certificates deno \
+    && python3 -m venv /opt/yt-dlp \
+    && /opt/yt-dlp/bin/pip install --no-cache-dir -U "yt-dlp[default]" "bgutil-ytdlp-pot-provider==2.0.2" \
+    && ln -s /opt/yt-dlp/bin/yt-dlp /usr/local/bin/yt-dlp \
+    && yt-dlp --version && deno --version
 
 RUN --mount=type=cache,target=/go/pkg/mod/ \
     --mount=type=bind,source=go.sum,target=go.sum \
