@@ -126,7 +126,7 @@ func (ex *InstaFixExtractor) Extract(ctx context.Context, mediaURL string) ([]st
 
 func (ex *InstaFixExtractor) ExtractMedia(ctx context.Context, mediaURL string) (_ Media, err error) {
 	ctx, span := tracer.Start(ctx, "instafix_extract")
-	defer tr.End(span, &err)
+	defer EndExtractor(span, &err)
 	span.SetAttributes(attribute.String("site", siteOf(mediaURL)), attribute.String("instafix.host", ex.Host))
 
 	kind, id, err := instagramPost(mediaURL)

@@ -180,7 +180,7 @@ func (ex *InstagramEmbedExtractor) Extract(ctx context.Context, mediaURL string)
 
 func (ex *InstagramEmbedExtractor) ExtractMedia(ctx context.Context, mediaURL string) (_ Media, err error) {
 	ctx, span := tracer.Start(ctx, "instagram_embed_extract")
-	defer EndSpan(span, &err)
+	defer EndExtractor(span, &err)
 	span.SetAttributes(attribute.String("site", siteOf(mediaURL)))
 
 	post, err := ex.fetch(ctx, mediaURL)

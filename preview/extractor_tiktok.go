@@ -368,7 +368,7 @@ func (ex *TikTokExtractor) Extract(ctx context.Context, mediaURL string) ([]stri
 
 func (ex *TikTokExtractor) ExtractMedia(ctx context.Context, mediaURL string) (_ Media, err error) {
 	ctx, span := tracer.Start(ctx, "tiktok_extract")
-	defer EndSpan(span, &err)
+	defer EndExtractor(span, &err)
 	span.SetAttributes(attribute.String("site", siteOf(mediaURL)))
 
 	id, ok := tikTokPostID(mediaURL)

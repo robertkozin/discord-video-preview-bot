@@ -138,7 +138,7 @@ func parseYtDlpInfo(stdout string) *Metadata {
 
 func (ex *YtDlpExtractor) ExtractMedia(ctx context.Context, mediaURL string) (_ Media, err error) {
 	ctx, span := tracer.Start(ctx, "ytdlp_extract")
-	defer EndSpan(span, &err)
+	defer EndExtractor(span, &err)
 	span.SetAttributes(attribute.Bool("proxy", ex.Proxy != ""), attribute.Bool("pot_provider", ex.POTProvider != ""))
 
 	ctx, cancel := context.WithTimeout(ctx, ytDlpTimeout)

@@ -12,6 +12,7 @@ import (
 	"github.com/robertkozin/discord-video-preview-bot/tr"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/trace"
 )
 
@@ -66,6 +67,34 @@ func EndSpan(span trace.Span, err *error) {
 		span.AddEvent("no_video", trace.WithAttributes(attribute.String("reason", truncate((*err).Error(), 500))))
 	}
 	tr.EndIgnore(span, err, ErrNoVideo)
+}
+
+// EndExtractor closes an extractor's span. An extractor that fails isn't a
+// failed request when a later extractor then succeeds, so its failure is
+// recorded on the span (exception event, extractor.failed, error.kind) but
+// leaves the status unset instead of error: error searches and has_errors then
+// only show requests that failed altogether, which the extract, reupload and
+// root spans report. ErrNoVideo is handled as in EndSpan.
+func EndExtractor(span trace.Span, err *error) {
+	if err != nil && *err != nil && errors.Is(*err, ErrNoVideo) {
+		EndSpan(span, err)
+		return
+	}
+	endQuietly(span, err, "extractor.failed")
+}
+
+// endQuietly closes span, recording a failure (exception event, failedAttr,
+// error.kind) without an error status: the caller decides whether the failure
+// ends the request.
+func endQuietly(span trace.Span, err *error, failedAttr string) {
+	defer span.End()
+	if err != nil && *err != nil {
+		span.RecordError(*err)
+		span.SetAttributes(attribute.Bool(failedAttr, true), attribute.String("error.kind", errorKind(*err)))
+		span.SetStatus(codes.Unset, "")
+		return
+	}
+	span.SetStatus(codes.Ok, "")
 }
 
 type Extractor interface {

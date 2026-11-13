@@ -341,7 +341,7 @@ func (ex *YouTubeExtractor) Extract(ctx context.Context, mediaURL string) ([]str
 
 func (ex *YouTubeExtractor) ExtractMedia(ctx context.Context, mediaURL string) (_ Media, err error) {
 	ctx, span := tracer.Start(ctx, "youtube_extract")
-	defer EndSpan(span, &err)
+	defer EndExtractor(span, &err)
 	span.SetAttributes(attribute.String("site", siteOf(mediaURL)))
 
 	id, ok := youtubeShortID(mediaURL)

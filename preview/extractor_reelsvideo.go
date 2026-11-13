@@ -22,15 +22,18 @@ func (ex *ReelsVideoExtractor) IsSupported(mediaURL string) bool {
 	})
 }
 
-func (ex *ReelsVideoExtractor) Extract(ctx context.Context, mediaURL string) ([]string, error) {
+func (ex *ReelsVideoExtractor) Extract(ctx context.Context, mediaURL string) (urls []string, err error) {
 	_, span := tracer.Start(ctx, "reelsvideo_extract")
-	defer span.End()
+	defer EndExtractor(span, &err)
 
 	remoteURL, err := browser.TryChan(func(page *rod.Page, ret chan string) {
 		page = page.Timeout(15 * time.Second)
 		ex.extract(page, mediaURL, ret)
 	})
-	return []string{remoteURL}, err
+	if err != nil {
+		return nil, err
+	}
+	return []string{remoteURL}, nil
 }
 
 func (ex *ReelsVideoExtractor) extract(page *rod.Page, target string, ret chan string) {

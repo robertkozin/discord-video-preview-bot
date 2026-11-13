@@ -98,7 +98,7 @@ func (ex *CobaltExtractor) Extract(ctx context.Context, url string) (_ []string,
 		headers []string
 	)
 	ctx, span := tracer.Start(ctx, "cobalt_extract")
-	defer EndSpan(span, &err)
+	defer EndExtractor(span, &err)
 	span.SetAttributes(attribute.String("site", siteOf(url)))
 
 	if ex.APIKey != "" {

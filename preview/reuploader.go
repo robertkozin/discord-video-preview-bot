@@ -73,6 +73,7 @@ func (reup *Reuploader) Reupload(ctx context.Context, mediaURL string) (res Resu
 	parent := trace.SpanFromContext(ctx)
 	ctx, span := tracer.Start(ctx, "reupload")
 	defer EndSpan(span, &err)
+	var tried []string // every extractor tried so far, across transfer fallbacks
 	setAttrs := func(kv ...attribute.KeyValue) {
 		span.SetAttributes(kv...)
 		parent.SetAttributes(kv...)
@@ -126,14 +127,24 @@ func (reup *Reuploader) Reupload(ctx context.Context, mediaURL string) (res Resu
 		transferErrs []error
 	)
 	for next := 0; ; {
-		media, extractor, next, err = reup.extract(ctx, cleanURL, next)
+		media, extractor, next, err = reup.extract(ctx, cleanURL, next, &tried)
+		setAttrs(
+			attribute.String("preview.tried", strings.Join(tried, ",")),
+			attribute.Int("preview.attempts", len(tried)),
+		)
 		if err != nil {
+			setAttrs(attribute.Bool("preview.chain_failed", !errors.Is(err, ErrNoVideo)))
 			if len(transferErrs) > 0 {
 				err = errors.Join(append(transferErrs, err)...)
 			}
 			return Result{}, fmt.Errorf("extracting: %w", err)
 		}
-		setAttrs(attribute.String("preview.extractor", extractor))
+		setAttrs(attribute.Bool("preview.chain_failed", false))
+		// fallback: the winner wasn't the first extractor that tried, e.g. fxtwitter after x
+		setAttrs(
+			attribute.String("preview.extractor", extractor),
+			attribute.Bool("preview.fallback", len(tried) > 1),
+		)
 
 		// when the extractor that won didn't know the post's details, ask the
 		// ones that can while the media transfers
@@ -223,7 +234,7 @@ func (reup *Reuploader) fetchMetadata(ctx context.Context, mediaURL, skip string
 // extract tries the extractors from index from on, and returns the media, the
 // name of the extractor that produced it and the index to continue from when
 // that media turns out to be unusable.
-func (reup *Reuploader) extract(ctx context.Context, mediaURL string, from int) (media Media, used string, next int, err error) {
+func (reup *Reuploader) extract(ctx context.Context, mediaURL string, from int, tried *[]string) (media Media, used string, next int, err error) {
 	ctx, span := tracer.Start(ctx, "extract")
 	defer EndSpan(span, &err)
 	span.SetAttributes(attribute.String("site", siteOf(mediaURL)))
@@ -238,6 +249,7 @@ func (reup *Reuploader) extract(ctx context.Context, mediaURL string, from int) 
 		if extractor.IsSupported(mediaURL) {
 			name := extractorName(extractor)
 			attempted = append(attempted, name)
+			*tried = append(*tried, name)
 			media, err = extractMedia(ctx, extractor, mediaURL)
 			if errors.Is(err, ErrNoVideo) {
 				span.SetAttributes(attribute.Bool("extractor.no_video", true))
@@ -246,6 +258,7 @@ func (reup *Reuploader) extract(ctx context.Context, mediaURL string, from int) 
 			if err != nil {
 				span.AddEvent("extractor_failed", trace.WithAttributes(
 					attribute.String("extractor", name),
+					attribute.String("error.kind", errorKind(err)),
 					attribute.String("error", truncate(err.Error(), 500)),
 				))
 				errs = append(errs, err)
@@ -407,7 +420,22 @@ func downloadHttp(ctx context.Context, remoteURL string) ([]byte, error) {
 
 // downloadHttpWith is downloadHttp with its own client (e.g. one holding a
 // site session's cookies) and extra request headers.
-func downloadHttpWith(ctx context.Context, client *http.Client, remoteURL string, header http.Header) ([]byte, error) {
+func downloadHttpWith(ctx context.Context, client *http.Client, remoteURL string, header http.Header) (_ []byte, err error) {
+	// http_do's span ends when the headers arrive, so this one covers the body
+	// too: that is where the time goes for a large or throttled download
+	ctx, span := tracer.Start(ctx, "media_download", trace.WithAttributes(attribute.String("url", redactRawURL(remoteURL))))
+	started := time.Now()
+	defer func() {
+		span.SetAttributes(attribute.Float64("download.seconds", time.Since(started).Seconds()))
+		if errors.Is(err, errDownloadStalled) {
+			span.SetAttributes(attribute.Bool("download.stalled", true))
+		}
+		if errors.Is(err, errMediaTooLarge) {
+			span.SetAttributes(attribute.Bool("download.too_large", true))
+		}
+		endQuietly(span, &err, "download.failed")
+	}()
+
 	ctx, cancelTotal := context.WithTimeout(ctx, downloadMaxTime)
 	defer cancelTotal()
 	ctx, cancel := context.WithCancelCause(ctx)
@@ -418,6 +446,7 @@ func downloadHttpWith(ctx context.Context, client *http.Client, remoteURL string
 	defer idle.Stop()
 
 	body, err := downloadHttpBody(ctx, client, remoteURL, header, idle)
+	span.SetAttributes(attribute.Int("download.bytes", len(body)))
 	if err != nil {
 		if cause := context.Cause(ctx); errors.Is(cause, errDownloadStalled) {
 			return nil, cause

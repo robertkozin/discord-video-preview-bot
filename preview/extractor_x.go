@@ -243,7 +243,7 @@ func (ex *XExtractor) Extract(ctx context.Context, mediaURL string) ([]string, e
 
 func (ex *XExtractor) ExtractMedia(ctx context.Context, mediaURL string) (_ Media, err error) {
 	ctx, span := tracer.Start(ctx, "x_extract")
-	defer EndSpan(span, &err)
+	defer EndExtractor(span, &err)
 	span.SetAttributes(attribute.String("site", siteOf(mediaURL)))
 
 	tweet, err := ex.fetch(ctx, mediaURL)

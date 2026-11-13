@@ -12,8 +12,6 @@ import (
 	"strconv"
 	"strings"
 	"time"
-
-	"github.com/robertkozin/discord-video-preview-bot/tr"
 )
 
 var _ Extractor = (*BrightDataExtractor)(nil)
@@ -179,7 +177,7 @@ func (ex *BrightDataExtractor) Extract(ctx context.Context, mediaURL string) ([]
 
 func (ex *BrightDataExtractor) ExtractMedia(ctx context.Context, mediaURL string) (_ Media, err error) {
 	ctx, span := tracer.Start(ctx, "brightdata_extract")
-	defer tr.End(span, &err)
+	defer EndExtractor(span, &err)
 
 	ds, ok := ex.dataset(mediaURL)
 	if !ok {

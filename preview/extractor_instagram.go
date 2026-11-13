@@ -210,11 +210,13 @@ func (ex *InstagramExtractor) fetch(ctx context.Context, mediaURL string) (*inst
 	var info instagramResponse
 	_ = json.Unmarshal(body, &info)
 	if resp.StatusCode == http.StatusOK && len(info.Items) > 0 {
+		traceSpan(ctx).SetAttributes(attribute.String("instagram.session", "ok"))
 		return &info.Items[0], nil
 	}
 	msg := cmp.Or(info.Message, truncate(string(body), 120))
 	switch {
 	case info.Login || resp.StatusCode == http.StatusUnauthorized || strings.Contains(msg, "login_required") || strings.Contains(msg, "checkpoint"):
+		traceSpan(ctx).SetAttributes(attribute.String("instagram.session", "rejected"))
 		return nil, fmt.Errorf("instagram session rejected (login required): %s: %s", resp.Status, msg)
 	case resp.StatusCode == http.StatusNotFound || strings.Contains(strings.ToLower(msg), "media not found") || strings.Contains(msg, "Invalid media_id"):
 		return nil, fmt.Errorf("instagram media info: %s: %w", msg, ErrNoVideo)
@@ -295,7 +297,7 @@ func (ex *InstagramExtractor) Extract(ctx context.Context, mediaURL string) ([]s
 
 func (ex *InstagramExtractor) ExtractMedia(ctx context.Context, mediaURL string) (_ Media, err error) {
 	ctx, span := tracer.Start(ctx, "instagram_extract")
-	defer EndSpan(span, &err)
+	defer EndExtractor(span, &err)
 	span.SetAttributes(attribute.String("site", siteOf(mediaURL)))
 
 	item, err := ex.fetch(ctx, mediaURL)

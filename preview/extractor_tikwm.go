@@ -116,7 +116,7 @@ func (ex *TikWMExtractor) Extract(ctx context.Context, mediaURL string) ([]strin
 
 func (ex *TikWMExtractor) ExtractMedia(ctx context.Context, mediaURL string) (_ Media, err error) {
 	ctx, span := tracer.Start(ctx, "tikwm_extract")
-	defer tr.End(span, &err)
+	defer EndExtractor(span, &err)
 	span.SetAttributes(attribute.String("site", siteOf(mediaURL)))
 
 	post, err := ex.fetch(ctx, mediaURL)

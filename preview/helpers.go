@@ -66,6 +66,7 @@ func httpDoWith(client *http.Client, req *http.Request) (*http.Response, error) 
 	_, span := tracer.Start(req.Context(), "http_do", trace.WithAttributes(
 		attribute.String("url", redactURL(req.URL)),
 		attribute.String("method", req.Method),
+		attribute.String("server.address", req.URL.Hostname()),
 	))
 	defer span.End()
 
