@@ -106,6 +106,10 @@ func NewExtractor(config *url.URL) (ex Extractor, err error) {
 		ex, err = NewFxTwitter(config)
 	case "tiktok":
 		ex, err = NewTikTok(config)
+	case "instagram":
+		ex, err = NewInstagram(config)
+	case "instagramembed":
+		ex, err = NewInstagramEmbed(config)
 	case "youtube":
 		ex, err = NewYouTube(config)
 	case "tikwm":
