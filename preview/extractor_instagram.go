@@ -216,7 +216,7 @@ func (ex *InstagramExtractor) fetch(ctx context.Context, mediaURL string) (*inst
 	switch {
 	case info.Login || resp.StatusCode == http.StatusUnauthorized || strings.Contains(msg, "login_required") || strings.Contains(msg, "checkpoint"):
 		return nil, fmt.Errorf("instagram session rejected (login required): %s: %s", resp.Status, msg)
-	case resp.StatusCode == http.StatusNotFound || strings.Contains(strings.ToLower(msg), "media not found"):
+	case resp.StatusCode == http.StatusNotFound || strings.Contains(strings.ToLower(msg), "media not found") || strings.Contains(msg, "Invalid media_id"):
 		return nil, fmt.Errorf("instagram media info: %s: %w", msg, ErrNoVideo)
 	case resp.StatusCode == http.StatusOK:
 		// 200 without items: deleted, or not visible to this account

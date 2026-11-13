@@ -55,8 +55,11 @@ func newFakeInstagram(t *testing.T) *InstagramExtractor {
 			fmt.Fprint(w, `{"items":[{"media_type":8,"user":{"username":"c"},"carousel_media":[
 				{"image_versions2":{"candidates":[{"url":"https://cdn/photo-big","width":1440,"height":1440},{"url":"https://cdn/photo-small","width":320,"height":320}]}},
 				{"image_versions2":{"candidates":[{"url":"https://cdn/thumb"}]},"video_versions":[{"url":"https://cdn/clip","width":720,"height":720}]}]}],"status":"ok"}`)
+		case "/api/v1/media/0/info/":
+			w.WriteHeader(http.StatusBadRequest) // as Instagram does, not 404
+			fmt.Fprint(w, `{"message":"Invalid media_id 0","status":"fail"}`)
 		default:
-			w.WriteHeader(http.StatusNotFound)
+			w.WriteHeader(http.StatusBadRequest)
 			fmt.Fprint(w, `{"message":"Media not found or unavailable","status":"fail"}`)
 		}
 	}))
@@ -95,6 +98,10 @@ func TestInstagramExtract(t *testing.T) {
 	}
 
 	// gone: ErrNoVideo
+	if _, err := ex.ExtractMedia(ctx, "https://www.instagram.com/p/Dfp6E98Bjxq/"); !errors.Is(err, ErrNoVideo) {
+		t.Errorf("want ErrNoVideo, got %v", err)
+	}
+	// a shortcode that decodes to a bad id: Instagram answers 400 "Invalid media_id", also gone
 	if _, err := ex.ExtractMedia(ctx, "https://www.instagram.com/p/AAAAAAAAAAA/"); !errors.Is(err, ErrNoVideo) {
 		t.Errorf("want ErrNoVideo, got %v", err)
 	}
