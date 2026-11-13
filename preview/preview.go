@@ -100,8 +100,12 @@ func NewExtractor(config *url.URL) (ex Extractor, err error) {
 		ex, err = NewBrightData(config)
 	case "ytdlp":
 		ex, err = NewYtDlp(config)
+	case "x":
+		ex, err = NewX(config)
 	case "fxtwitter":
 		ex, err = NewFxTwitter(config)
+	case "tiktok":
+		ex, err = NewTikTok(config)
 	case "tikwm":
 		ex, err = NewTikWM(config)
 	case "instafix":

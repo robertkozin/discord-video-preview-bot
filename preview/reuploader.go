@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"net/http"
 	"net/url"
 	"os"
 	"slices"
@@ -401,6 +402,12 @@ func downloadFile(path string) ([]byte, error) {
 // arrived for downloadIdleTimeout, or after downloadMaxTime in total, so a slow
 // but steady stream keeps going.
 func downloadHttp(ctx context.Context, remoteURL string) ([]byte, error) {
+	return downloadHttpWith(ctx, mediaClient, remoteURL, nil)
+}
+
+// downloadHttpWith is downloadHttp with its own client (e.g. one holding a
+// site session's cookies) and extra request headers.
+func downloadHttpWith(ctx context.Context, client *http.Client, remoteURL string, header http.Header) ([]byte, error) {
 	ctx, cancelTotal := context.WithTimeout(ctx, downloadMaxTime)
 	defer cancelTotal()
 	ctx, cancel := context.WithCancelCause(ctx)
@@ -410,7 +417,7 @@ func downloadHttp(ctx context.Context, remoteURL string) ([]byte, error) {
 	})
 	defer idle.Stop()
 
-	body, err := downloadHttpBody(ctx, remoteURL, idle)
+	body, err := downloadHttpBody(ctx, client, remoteURL, header, idle)
 	if err != nil {
 		if cause := context.Cause(ctx); errors.Is(cause, errDownloadStalled) {
 			return nil, cause
@@ -434,8 +441,15 @@ func (ir idleReader) Read(p []byte) (int, error) {
 	return n, err
 }
 
-func downloadHttpBody(ctx context.Context, remoteURL string, idle *time.Timer) ([]byte, error) {
-	resp, err := httpGetMedia(ctx, remoteURL)
+func downloadHttpBody(ctx context.Context, client *http.Client, remoteURL string, header http.Header, idle *time.Timer) ([]byte, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, remoteURL, nil)
+	if err != nil {
+		return nil, fmt.Errorf("creating request: %w", err)
+	}
+	for k, v := range header {
+		req.Header[k] = v
+	}
+	resp, err := httpDoWith(client, req)
 	if err != nil {
 		return nil, fmt.Errorf("fetching remote url: %w", err)
 	}

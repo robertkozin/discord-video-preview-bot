@@ -45,15 +45,17 @@ func init() {
 	mediaClient = &http.Client{Transport: mediaTransport, Jar: cookieJar}
 }
 
+// newSessionClient returns a client with its own cookie jar, for a site whose
+// media only downloads with the cookies of the page that listed it. Like
+// mediaClient it has no total timeout; use a context.
+func newSessionClient() *http.Client {
+	jar, _ := cookiejar.New(nil)
+	return &http.Client{Transport: mediaClient.Transport, Jar: jar}
+}
+
 func httpGet(ctx context.Context, url string) (*http.Response, error) {
 	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	return httpDo(req)
-}
-
-// httpGetMedia is httpGet for downloading media, see mediaClient.
-func httpGetMedia(ctx context.Context, url string) (*http.Response, error) {
-	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
-	return httpDoWith(mediaClient, req)
 }
 
 func httpDo(req *http.Request) (*http.Response, error) {
