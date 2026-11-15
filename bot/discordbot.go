@@ -108,6 +108,12 @@ func (b *Discord) replyToMessage(ctx context.Context, s *discordgo.Session, m *d
 		return
 	}
 
+	if len(res.Links) > maxGalleryItems {
+		// a gallery holds 10 at most; leave the link and its own embed alone
+		span.SetAttributes(attribute.Bool("preview.too_many_items", true), attribute.Int("preview.files", len(res.Links)))
+		return
+	}
+
 	// prefer what the extractors know about the post, and only fall back to
 	// Discord's own embed (which can be slow or missing) when they had nothing
 	text := metadataText(res.Metadata)
@@ -164,6 +170,9 @@ func (b *Discord) waitForEmbed(ctx context.Context, mc *discordgo.MessageCreate)
 
 	return ret
 }
+
+// maxGalleryItems is how many items Discord allows in one media gallery.
+const maxGalleryItems = 10
 
 func (b *Discord) buildReply(content string, hostedURLs []string) *discordgo.MessageSend {
 	galleryItems := make([]discordgo.MediaGalleryItem, len(hostedURLs))

@@ -53,6 +53,13 @@ func (ex *XExtractor) String() string {
 }
 
 func (ex *XExtractor) IsSupported(mediaURL string) bool {
+	return isTweetURL(mediaURL)
+}
+
+// isTweetURL reports whether mediaURL is an x.com or twitter.com post. Only
+// their videos and gifs are previewed: photo posts already show fine in
+// Discord's own embed, and a post can have up to 20 photos.
+func isTweetURL(mediaURL string) bool {
 	return simpleURLMatch(mediaURL, []string{
 		"x.com/*/status/*",
 		"twitter.com/*/status/*",
@@ -147,15 +154,12 @@ func (ex *XExtractor) fetch(ctx context.Context, mediaURL string) (*xTweet, erro
 	return &tweet, nil
 }
 
-// mediaURLs returns one url per photo, video or gif of the post.
-func (t *xTweet) mediaURLs() []string {
+// videoURLs returns one url per video or gif of the post; photos are skipped
+// (see isTweetURL).
+func (t *xTweet) videoURLs() []string {
 	var urls []string
 	for _, m := range t.MediaDetails {
 		switch m.Type {
-		case "photo":
-			if m.MediaURLHTTPS != "" {
-				urls = append(urls, m.MediaURLHTTPS+"?name=orig")
-			}
 		case "video", "animated_gif":
 			if v := pickXVariant(m.VideoInfo.Variants); v != "" {
 				urls = append(urls, v)
@@ -251,10 +255,10 @@ func (ex *XExtractor) ExtractMedia(ctx context.Context, mediaURL string) (_ Medi
 		return Media{}, err
 	}
 
-	urls := tweet.mediaURLs()
+	urls := tweet.videoURLs()
 	if len(urls) == 0 && tweet.QuotedTweet != nil {
 		// a post quoting a video: show the quoted video
-		urls = tweet.QuotedTweet.mediaURLs()
+		urls = tweet.QuotedTweet.videoURLs()
 		span.SetAttributes(attribute.Bool("x.quoted_media", len(urls) > 0))
 	}
 	if len(urls) == 0 {
@@ -263,6 +267,7 @@ func (ex *XExtractor) ExtractMedia(ctx context.Context, mediaURL string) (_ Medi
 			err = fmt.Errorf("x embed: post has a card but no media")
 			return Media{}, err
 		}
+		// text or photos only
 		err = fmt.Errorf("x embed: %w", ErrNoVideo)
 		return Media{}, err
 	}

@@ -47,6 +47,15 @@ var xResponses = map[string]string{
 		"mediaDetails":[{"type":"video","video_info":{"variants":[
 			{"bitrate":10368000,"content_type":"video/mp4","url":"https://video.twimg.com/v/vid/avc1/1080x1920/big.mp4"},
 			{"bitrate":5000000,"content_type":"video/mp4","url":"https://video.twimg.com/v/vid/avc1/1080x1080/smaller.mp4"}]}}]}`,
+	// a photo and a video
+	"9": `{"__typename":"Tweet","text":"mixed","display_text_range":[0,5],"user":{"name":"A","screen_name":"a"},
+		"mediaDetails":[{"type":"photo","media_url_https":"https://pbs.twimg.com/media/A.png"},{"type":"video","video_info":{"variants":[
+			{"bitrate":2176000,"content_type":"video/mp4","url":"https://video.twimg.com/v/vid/avc1/720x1280/v.mp4"}]}}]}`,
+	// a photo, quoting a video
+	"10": `{"__typename":"Tweet","text":"photo quoting","display_text_range":[0,13],"user":{"name":"A","screen_name":"a"},
+		"mediaDetails":[{"type":"photo","media_url_https":"https://pbs.twimg.com/media/A.png"}],
+		"quoted_tweet":{"__typename":"Tweet","text":"q","mediaDetails":[{"type":"video","video_info":{"variants":[
+			{"bitrate":2176000,"content_type":"video/mp4","url":"https://video.twimg.com/q/vid/avc1/720x1280/q.mp4"}]}}]}}`,
 }
 
 func newTestX(t *testing.T) *XExtractor {
@@ -81,7 +90,9 @@ func TestXExtract(t *testing.T) {
 		wantErr bool
 	}{
 		{id: "1", want: []string{"https://video.twimg.com/amplify_video/1/vid/avc1/720x1280/b.mp4"}},
-		{id: "2", want: []string{"https://pbs.twimg.com/media/A.png?name=orig", "https://pbs.twimg.com/media/B.jpg?name=orig"}},
+		{id: "2", noVideo: true}, // photos are skipped
+		{id: "9", want: []string{"https://video.twimg.com/v/vid/avc1/720x1280/v.mp4"}},
+		{id: "10", want: []string{"https://video.twimg.com/q/vid/avc1/720x1280/q.mp4"}},
 		{id: "3", noVideo: true},
 		{id: "4", want: []string{"https://video.twimg.com/tweet_video/G.mp4"}},
 		{id: "5", wantErr: true},
@@ -132,12 +143,13 @@ func TestXMetadata(t *testing.T) {
 		t.Error("posted_at not parsed")
 	}
 
-	media, err = ex.ExtractMedia(context.Background(), "https://x.com/a/status/7")
+	// a photo post has no media to extract, but still has metadata
+	long, err := ex.Metadata(context.Background(), "https://x.com/a/status/7")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if want := "first line\nsecond…"; media.Metadata.Description != want {
-		t.Errorf("long post description = %q, want %q", media.Metadata.Description, want)
+	if want := "first line\nsecond…"; long.Description != want {
+		t.Errorf("long post description = %q, want %q", long.Description, want)
 	}
 }
 

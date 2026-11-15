@@ -16,7 +16,7 @@ func TestProbablyVideo(t *testing.T) {
 		{"https://twitter.com/user/status/123", true},
 		// tiktok
 		{"https://www.tiktok.com/@user/video/123", true},
-		{"https://www.tiktok.com/@user/photo/123", false},
+		{"https://www.tiktok.com/@user/photo/123", true}, // a slideshow becomes a video
 		{"https://www.tiktok.com/@user", false},
 		{"https://www.tiktok.com/tag/cats", false},
 		{"https://www.tiktok.com/d/1/ZP9fRX5EnCuJM-sKkqX/", true},

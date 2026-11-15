@@ -6,6 +6,8 @@ import (
 	"errors"
 	"fmt"
 	"net/url"
+	"path"
+	"strings"
 
 	"go.opentelemetry.io/otel/attribute"
 )
@@ -81,10 +83,11 @@ func (ce CobaltError) Error() string {
 }
 
 type CobaltResponse struct {
-	Status string         `json:"status"` // tunnel / local-processing / redirect / picker / error
-	Url    string         `json:"url"`
-	Picker []CobaltPicker `json:"picker"`
-	Audio  any            `json:"audio"`
+	Status   string         `json:"status"` // tunnel / local-processing / redirect / picker / error
+	Url      string         `json:"url"`
+	Filename string         `json:"filename"` // tunnel / redirect, e.g. twitter_<id>.jpg for a photo
+	Picker   []CobaltPicker `json:"picker"`
+	Audio    any            `json:"audio"`
 }
 
 type CobaltPicker struct {
@@ -114,26 +117,44 @@ func (ex *CobaltExtractor) Extract(ctx context.Context, url string) (_ []string,
 		if errors.As(err, &cobaltErr) {
 			span.SetAttributes(attribute.String("cobalt.error_code", cobaltErr.Err.Code))
 		}
-		if errors.As(err, &cobaltErr) && cobaltErr.Err.Code == "error.api.fetch.empty" &&
-			simpleURLMatch(url, []string{"x.com/*/status/*", "twitter.com/*/status/*"}) {
+		if errors.As(err, &cobaltErr) && cobaltErr.Err.Code == "error.api.fetch.empty" && isTweetURL(url) {
 			return nil, fmt.Errorf("cobalt: %w", ErrNoVideo)
 		}
 		return nil, fmt.Errorf("making cobalt request: %w", err)
 	}
 
 	span.SetAttributes(attribute.String("cobalt.status", value.Status))
+	// only videos and gifs of x posts, see isTweetURL
+	videoOnly := isTweetURL(url)
 	switch value.Status {
-	case "redirect":
-		return []string{value.Url}, nil
-	case "tunnel":
+	case "redirect", "tunnel":
+		if videoOnly && isPhotoFilename(value.Filename) {
+			return nil, fmt.Errorf("cobalt: photo post: %w", ErrNoVideo)
+		}
 		return []string{value.Url}, nil
 	case "picker":
-		urls := make([]string, len(value.Picker))
-		for i, p := range value.Picker {
-			urls[i] = p.Url
+		var urls []string
+		for _, p := range value.Picker {
+			if videoOnly && p.Type == "photo" {
+				continue
+			}
+			urls = append(urls, p.Url)
+		}
+		if videoOnly && len(urls) == 0 {
+			return nil, fmt.Errorf("cobalt: photo post: %w", ErrNoVideo)
 		}
 		return urls, nil
 	default:
 		return nil, fmt.Errorf("unexpected cobalt response type: %s", value.Status)
 	}
+}
+
+// isPhotoFilename reports whether a cobalt filename is an image (cobalt names a
+// single photo e.g. twitter_<id>.jpg, a video .mp4).
+func isPhotoFilename(name string) bool {
+	switch strings.ToLower(path.Ext(name)) {
+	case ".jpg", ".jpeg", ".png", ".webp":
+		return true
+	}
+	return false
 }

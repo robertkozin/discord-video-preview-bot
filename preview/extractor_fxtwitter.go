@@ -154,13 +154,14 @@ func (ex *FxTwitterExtractor) ExtractMedia(ctx context.Context, mediaURL string)
 	var urls []string
 	if tweet.Media != nil {
 		for _, m := range tweet.Media.All {
-			if m.URL != "" {
+			// photos are skipped, see isTweetURL
+			if m.URL != "" && m.Type != "photo" {
 				urls = append(urls, m.URL)
 			}
 		}
 	}
 	if len(urls) == 0 {
-		// FxTwitter loaded the tweet and it has no media (text-only post)
+		// FxTwitter loaded the tweet and it has no video (text or photos only)
 		err = fmt.Errorf("fxtwitter: %w", ErrNoVideo)
 		return Media{}, err
 	}

@@ -96,6 +96,12 @@ func (b *Discord) respondWithPreview(ctx context.Context, s *discordgo.Session, 
 		return
 	}
 
+	if len(res.Links) > maxGalleryItems {
+		span.SetAttributes(attribute.Bool("preview.too_many_items", true), attribute.Int("preview.files", len(res.Links)))
+		err = fmt.Errorf("it has %d items and Discord shows at most %d in one message", len(res.Links), maxGalleryItems)
+		return
+	}
+
 	text := metadataText(res.Metadata)
 	span.SetAttributes(attribute.Bool("reply.text_from_metadata", text != ""))
 	if text == "" {

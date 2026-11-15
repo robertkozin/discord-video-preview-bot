@@ -21,6 +21,7 @@ import (
 
 	"github.com/robertkozin/discord-video-preview-bot/tr"
 	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/trace"
 )
 
 var (
@@ -110,6 +111,9 @@ type tikTokItem struct {
 		PlayAddr    string          `json:"playAddr"`
 		BitrateInfo []tikTokBitrate `json:"bitrateInfo"`
 	} `json:"video"`
+	Music struct {
+		PlayURL string `json:"playUrl"`
+	} `json:"music"`
 	ImagePost *struct {
 		Images []struct {
 			ImageURL struct {
@@ -390,7 +394,15 @@ func (ex *TikTokExtractor) ExtractMedia(ctx context.Context, mediaURL string) (_
 	}()
 
 	if item.ImagePost != nil && len(item.ImagePost.Images) > 0 {
+		// a slideshow becomes one video with its music: it can have far more
+		// images than Discord's 10 per gallery
 		span.SetAttributes(attribute.Bool("tiktok.photo", true), attribute.Int("tiktok.images", len(item.ImagePost.Images)))
+		var images []string
+		defer func() {
+			for _, f := range images {
+				os.Remove(strings.TrimPrefix(f, "file://"))
+			}
+		}()
 		for i, img := range item.ImagePost.Images {
 			u := tikTokImage(img.ImageURL.URLList)
 			if u == "" {
@@ -400,8 +412,34 @@ func (ex *TikTokExtractor) ExtractMedia(ctx context.Context, mediaURL string) (_
 			if err != nil {
 				return Media{}, err
 			}
-			files = append(files, file)
+			images = append(images, file)
 		}
+
+		// the slideshow is still worth posting without its music
+		var audio string
+		if item.Music.PlayURL != "" {
+			if file, audioErr := session.downloadFirst(ctx, []string{item.Music.PlayURL}, ".audio"); audioErr == nil {
+				audio = file
+				defer os.Remove(strings.TrimPrefix(file, "file://"))
+			} else {
+				span.AddEvent("music_failed", trace.WithAttributes(attribute.String("error", audioErr.Error())))
+			}
+		}
+
+		paths := make([]string, len(images))
+		for i, f := range images {
+			paths[i] = strings.TrimPrefix(f, "file://")
+		}
+		video, err := slideshowToMP4(ctx, paths, strings.TrimPrefix(audio, "file://"))
+		if err != nil && audio != "" && ctx.Err() == nil {
+			// music ffmpeg can't read: still post the slideshow, silent
+			span.AddEvent("music_failed", trace.WithAttributes(attribute.String("error", err.Error())))
+			video, err = slideshowToMP4(ctx, paths, "")
+		}
+		if err != nil {
+			return Media{}, err
+		}
+		files = append(files, video)
 	} else {
 		mirrors := pickTikTokVideo(item)
 		if len(mirrors) == 0 {

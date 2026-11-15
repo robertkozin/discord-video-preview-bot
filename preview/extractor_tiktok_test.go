@@ -77,6 +77,10 @@ func newFakeTikTok(t *testing.T, items map[string]string) *fakeTikTok {
 			http.Error(w, "no session", http.StatusForbidden)
 			return
 		}
+		if strings.HasSuffix(r.PathValue("name"), ".jpeg") {
+			w.Write(testJPEG(90, 160))
+			return
+		}
 		w.Write([]byte("media:" + r.PathValue("name")))
 	})
 	f.srv = httptest.NewServer(mux)
@@ -154,7 +158,7 @@ func TestTikTokExtract(t *testing.T) {
 				{"Bitrate":156129,"CodecType":"h264","PlayAddr":{"Width":576,"Height":1024,"UrlList":["` + f.url("/media/h264-low") + `"]}},
 				{"Bitrate":303209,"CodecType":"h264","PlayAddr":{"Width":576,"Height":1024,"UrlList":["` + f.url("/missing/x") + `","` + f.url("/media/h264-576") + `"]}}]}}`,
 		// slideshow: jpeg mirrors picked over webp
-		"2": `{"id":"2","desc":"photos","author":{"uniqueId":"p"},"video":{},"imagePost":{"images":[
+		"2": `{"id":"2","desc":"photos","author":{"uniqueId":"p"},"video":{},"music":{"playUrl":"` + f.url("/media/music") + `"},"imagePost":{"images":[
 			{"imageURL":{"urlList":["` + f.url("/media/a.webp?x") + `","` + f.url("/media/a.jpeg?x") + `"]}},
 			{"imageURL":{"urlList":["` + f.url("/media/b.jpeg?x") + `"]}}]}}`,
 		// no h264 rendition: the default playAddr
@@ -169,13 +173,14 @@ func TestTikTokExtract(t *testing.T) {
 	ex := f.extractor(t)
 
 	tests := []struct {
-		id      string
-		want    []string
-		wantErr string
-		noVideo bool
+		id        string
+		want      []string
+		wantErr   string
+		noVideo   bool
+		slideshow bool
 	}{
 		{id: "1", want: []string{"media:h264-576"}},
-		{id: "2", want: []string{"media:a.jpeg", "media:b.jpeg"}},
+		{id: "2", slideshow: true}, // one video; the music isn't audio, so it's silent
 		{id: "3", want: []string{"media:play"}},
 		{id: "4", wantErr: "status 10231"},
 		{id: "5", wantErr: "age-restricted"},
@@ -203,7 +208,14 @@ func TestTikTokExtract(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if got := readFiles(t, media.URLs); fmt.Sprint(got) != fmt.Sprint(tt.want) {
+			got := readFiles(t, media.URLs)
+			if tt.slideshow {
+				if len(got) != 1 || detectContentType([]byte(got[0])) != "video/mp4" {
+					t.Fatalf("want one mp4, got %d files", len(got))
+				}
+				return
+			}
+			if fmt.Sprint(got) != fmt.Sprint(tt.want) {
 				t.Fatalf("media = %v, want %v", got, tt.want)
 			}
 		})

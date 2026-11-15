@@ -35,15 +35,13 @@ func ProbablyVideo(rawURL string) bool {
 		return len(segs) > 0
 
 	case host == "tiktok.com" || strings.HasSuffix(host, ".tiktok.com"):
-		if has("photo") {
-			return false
-		}
+		// /photo/<id> slideshows are turned into a video
 		if host != "tiktok.com" && host != "m.tiktok.com" && host != "pro.tiktok.com" {
 			return len(segs) > 0 // vm. / vt. short links
 		}
 		// /@user/video/<id> and the short forms /t/<code>, /d/..., /v/<id>;
 		// not profiles (/@user), /tag/, /music/, /discover, /search
-		return has("video") || (len(segs) > 0 && (segs[0] == "t" || segs[0] == "d" || segs[0] == "v"))
+		return has("video") || has("photo") || (len(segs) > 0 && (segs[0] == "t" || segs[0] == "d" || segs[0] == "v"))
 
 	case host == "instagram.com":
 		// reels, posts and shares; not profiles, /explore, /accounts or stories
