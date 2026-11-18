@@ -93,6 +93,31 @@ func muxToMP4(ctx context.Context, inputs ...string) (_ string, err error) {
 	return "file://" + path, nil
 }
 
+// webpToJPEG converts a still webp image to a jpeg, since the reuploader only
+// stores mp4, jpeg and png.
+func webpToJPEG(ctx context.Context, webp []byte) (_ []byte, err error) {
+	ctx, span := tracer.Start(ctx, "webp_to_jpeg")
+	defer tr.End(span, &err)
+	span.SetAttributes(attribute.Int("webp.bytes", len(webp)))
+
+	ctx, cancel := context.WithTimeout(ctx, muxTimeout)
+	defer cancel()
+
+	cmd := exec.CommandContext(ctx, "ffmpeg", "-loglevel", "error", "-f", "webp_pipe", "-i", "pipe:0",
+		"-frames:v", "1", "-c:v", "mjpeg", "-q:v", "2", "-f", "image2pipe", "pipe:1")
+	cmd.Stdin = bytes.NewReader(webp)
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout, cmd.Stderr = &stdout, &stderr
+	if err = cmd.Run(); err != nil {
+		return nil, fmt.Errorf("converting webp with ffmpeg: %w: %s", err, bytes.TrimSpace(stderr.Bytes()))
+	}
+	if detectContentType(stdout.Bytes()) != "image/jpeg" {
+		return nil, fmt.Errorf("converting webp with ffmpeg: output is not a jpeg")
+	}
+	span.SetAttributes(attribute.Int("jpeg.bytes", stdout.Len()))
+	return stdout.Bytes(), nil
+}
+
 // slideshowToMP4 turns jpeg images (local paths) into one h264 video that shows
 // each for slideshowSecondsPerImage, with audio (a local path, optional) under
 // it, so a long slideshow fits Discord's gallery as one item. The canvas is

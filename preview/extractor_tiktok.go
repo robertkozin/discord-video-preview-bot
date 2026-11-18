@@ -354,15 +354,16 @@ func pickTikTokVideo(it *tikTokItem) []string {
 	return nil
 }
 
-// tikTokImage picks a jpeg among an image's mirrors (others are webp or heic,
+// tikTokImages returns the jpeg mirrors of an image (others are webp or heic,
 // which Discord or the reuploader can't use).
-func tikTokImage(mirrors []string) string {
+func tikTokImages(mirrors []string) []string {
+	var jpegs []string
 	for _, u := range mirrors {
 		if strings.Contains(u, ".jpeg?") || strings.Contains(u, ".jpg?") {
-			return u
+			jpegs = append(jpegs, u)
 		}
 	}
-	return ""
+	return jpegs
 }
 
 func (ex *TikTokExtractor) Extract(ctx context.Context, mediaURL string) ([]string, error) {
@@ -404,11 +405,15 @@ func (ex *TikTokExtractor) ExtractMedia(ctx context.Context, mediaURL string) (_
 			}
 		}()
 		for i, img := range item.ImagePost.Images {
-			u := tikTokImage(img.ImageURL.URLList)
-			if u == "" {
+			mirrors := tikTokImages(img.ImageURL.URLList)
+			if len(mirrors) == 0 {
 				return Media{}, fmt.Errorf("tiktok: no jpeg for image %d", i+1)
 			}
-			file, err := session.downloadFirst(ctx, []string{u}, ".jpg")
+			if len(mirrors) == 1 {
+				// one retry: the image CDN sometimes answers a 504 that is gone a moment later
+				mirrors = append(mirrors, mirrors[0])
+			}
+			file, err := session.downloadFirst(ctx, mirrors, ".jpg")
 			if err != nil {
 				return Media{}, err
 			}

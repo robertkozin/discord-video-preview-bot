@@ -150,8 +150,15 @@ func (ex *TikWMExtractor) Metadata(ctx context.Context, mediaURL string) (_ *Met
 	return post.metadata(), nil
 }
 
+// tikwmTimeout bounds one tikwm request. It hangs until the 30s client timeout
+// on posts it can't get (region or IP blocked), while its slowest successes
+// took about 12s.
+const tikwmTimeout = 15 * time.Second
+
 func (ex *TikWMExtractor) request(ctx context.Context, apiURL string) (tikwmResponse, error) {
 	var parsed tikwmResponse
+	ctx, cancel := context.WithTimeout(ctx, tikwmTimeout)
+	defer cancel()
 	resp, err := httpGet(ctx, apiURL)
 	if err != nil {
 		return parsed, fmt.Errorf("fetching tikwm: %w", err)

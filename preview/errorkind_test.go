@@ -26,6 +26,9 @@ func TestErrorKind(t *testing.T) {
 		"tiktok: no jpeg for image 3":                                      kindNoMedia,
 		"tiktok id 7710231999 ok":                                          kindOther,
 		"something odd":                                                    kindOther,
+		"reelsvideo: Please verify you are human to continue.":             kindBotCheck,
+		"running yt-dlp: exit status 1: ERROR: [youtube] x: Sign in to confirm your age. This video may be inappropriate": kindLoginRequired,
+		"running yt-dlp: exit status 1: ERROR: [TikTok] 1: Your IP address is blocked from accessing this post":           kindGeoblock,
 	} {
 		if got := errorKind(errors.New(msg)); got != want {
 			t.Errorf("errorKind(%q) = %q, want %q", msg, got, want)

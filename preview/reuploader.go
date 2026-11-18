@@ -30,6 +30,11 @@ var errDownloadStalled = errors.New("download stalled")
 // tunnel whose upstream fetch failed.
 var errEmptyMedia = errors.New("remote media is empty")
 
+// errUnsupportedMedia means the url served an image in a format the reuploader
+// can't use or convert. The other extractors hand out the same image from the
+// same CDN, so Reupload doesn't fall back to them.
+var errUnsupportedMedia = errors.New("unsupported media type")
+
 var (
 	// downloadIdleTimeout is how long a download may go without receiving a
 	// byte, and downloadMaxTime is the longest it may take in total.
@@ -88,6 +93,7 @@ func (reup *Reuploader) Reupload(ctx context.Context, mediaURL string) (res Resu
 	// share links can stand for a shop or referral page rather than a video;
 	// resolving them first also gives every extractor (and the cache) the
 	// post's real url
+	setAttrs(attribute.String("preview.site", siteOf(mediaURL))) // set again below from the resolved url
 	resolvedURL, err := resolveTikTokShortLink(ctx, mediaURL)
 	if err != nil {
 		return Result{}, err
@@ -159,7 +165,11 @@ func (reup *Reuploader) Reupload(ctx context.Context, mediaURL string) (res Resu
 			break
 		}
 		err = fmt.Errorf("reuploading from %s: %w", extractor, err)
-		if ctx.Err() != nil {
+		if ctx.Err() != nil || errors.Is(err, errUnsupportedMedia) {
+			setAttrs(attribute.Bool("preview.chain_failed", true))
+			if len(transferErrs) > 0 {
+				err = errors.Join(append(transferErrs, err)...)
+			}
 			return Result{}, err
 		}
 		span.AddEvent("transfer_failed", trace.WithAttributes(
@@ -346,6 +356,18 @@ func fetchMedia(ctx context.Context, remoteURL string) ([]byte, string, error) {
 		if slices.Contains(allowedMediaTypes, contentType) {
 			return body, contentType, nil
 		}
+		if contentType == "image/webp" {
+			// e.g. Instagram posts whose photos only come as webp
+			jpg, convErr := webpToJPEG(ctx, body)
+			if convErr != nil {
+				return nil, "", fmt.Errorf("%w: %s: %w", errUnsupportedMedia, contentType, convErr)
+			}
+			return jpg, "image/jpeg", nil
+		}
+		if strings.HasPrefix(contentType, "image/") {
+			// remuxing an image into an mp4 can't work
+			return nil, "", fmt.Errorf("%w: %s", errUnsupportedMedia, contentType)
+		}
 		err = fmt.Errorf("expecting allowed content type: %s", contentType)
 	} else {
 		err = fmt.Errorf("downloading media to memory: %w", err)
@@ -485,6 +507,9 @@ func downloadHttpBody(ctx context.Context, client *http.Client, remoteURL string
 	defer resp.Body.Close()
 	idle.Reset(downloadIdleTimeout) // headers arrived
 
+	if resp.StatusCode == http.StatusNoContent {
+		return nil, fmt.Errorf("%w: %s", errEmptyMedia, resp.Status) // e.g. ssstik's tikcdn.io for a post it couldn't get
+	}
 	if resp.StatusCode != 200 {
 		return nil, fmt.Errorf("unexpected error fetching remote url: %s", resp.Status)
 	}

@@ -187,7 +187,7 @@ func (ex *YtDlpExtractor) ExtractMedia(ctx context.Context, mediaURL string) (_ 
 
 	if err = cmd.Run(); err != nil {
 		removeMatching(base + "*")
-		msg := lastLine(stderr.String())
+		msg := ytDlpError(stderr.String())
 		if ytDlpNoVideo(msg) {
 			err = fmt.Errorf("yt-dlp: %s: %w", msg, ErrNoVideo)
 			return Media{}, err
@@ -225,6 +225,26 @@ func removeMatching(pattern string) {
 	for _, m := range matches {
 		_ = os.Remove(m)
 	}
+}
+
+// ytDlpError returns yt-dlp's last error from its stderr: the last line that
+// starts with "ERROR:" and the lines after it, which continue the message (e.g.
+// a geoblock's "You might want to use a VPN..."). Without an ERROR: line it is
+// the last line.
+func ytDlpError(stderr string) string {
+	lines := strings.Split(strings.TrimSpace(stderr), "\n")
+	for i := len(lines) - 1; i >= 0; i-- {
+		if strings.HasPrefix(strings.TrimSpace(lines[i]), "ERROR:") {
+			var parts []string
+			for _, l := range lines[i:] {
+				if l = strings.TrimSpace(l); l != "" {
+					parts = append(parts, l)
+				}
+			}
+			return strings.Join(parts, " ")
+		}
+	}
+	return lastLine(stderr)
 }
 
 func lastLine(s string) string {

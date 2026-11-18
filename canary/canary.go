@@ -21,6 +21,7 @@ import (
 	"github.com/robertkozin/discord-video-preview-bot/tr"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/trace"
 )
 
 var tracer = otel.Tracer("canary")
@@ -28,6 +29,10 @@ var tracer = otel.Tracer("canary")
 const (
 	maxItems     = 300 // links kept in memory
 	checkTimeout = 4 * time.Minute
+	// maxNoVideoRetries is how many more links one tick tests after links that
+	// had nothing to download (text-only X posts, TikTok referral links), so a
+	// tick still tests an extractor. Such checks take well under a second.
+	maxNoVideoRetries = 3
 	// testedTTL is how long a tested link is remembered after trim drops it,
 	// so a source that still lists it (a hot listing changes slowly) doesn't
 	// bring it back as a new link to test again.
@@ -116,10 +121,17 @@ func (r *Runner) Run(ctx context.Context) {
 			return
 		case <-time.After(wait):
 		}
-		if it, ok := r.pick(); ok {
-			r.check(ctx, it)
-		} else {
-			fmt.Println("canary: nothing to test yet")
+		for tries := 0; tries <= maxNoVideoRetries; tries++ {
+			it, ok := r.pick()
+			if !ok {
+				if tries == 0 {
+					fmt.Println("canary: nothing to test yet")
+				}
+				break
+			}
+			if r.check(ctx, it) != "no_video" {
+				break
+			}
 		}
 		wait = r.Interval
 	}
@@ -128,12 +140,22 @@ func (r *Runner) Run(ctx context.Context) {
 // refresh fetches new links from every source and adds the ones that are
 // probably videos and that an extractor supports.
 func (r *Runner) refresh(ctx context.Context) {
+	// its own root span, so the sources' requests (e.g. a reddit token
+	// refresh) aren't orphaned roots
+	ctx, span := tracer.Start(ctx, "canary_refresh")
+	defer span.End()
+	span.SetAttributes(attribute.Bool("canary", true))
+
 	r.forgetTested()
 	var added, skipped int
 	for _, source := range r.Sources {
 		links, err := source.Fetch(ctx)
 		if err != nil {
 			fmt.Printf("canary: fetching %s: %v\n", source, err)
+			span.AddEvent("source_failed", trace.WithAttributes(
+				attribute.String("source", fmt.Sprint(source)),
+				attribute.String("error", err.Error()),
+			))
 		}
 		for _, l := range links {
 			if !preview.ProbablyVideo(l.URL) || !r.Reuploader.IsSupported(l.URL) {
@@ -146,6 +168,7 @@ func (r *Runner) refresh(ctx context.Context) {
 		}
 	}
 	fmt.Printf("canary: refreshed, %d new links (%d skipped as not video or unsupported)\n", added, skipped)
+	span.SetAttributes(attribute.Int("canary.added", added), attribute.Int("canary.skipped", skipped))
 }
 
 func (r *Runner) add(l Link) bool {
@@ -225,8 +248,9 @@ func (r *Runner) pick() (Item, bool) {
 	return *chosen, true
 }
 
-// check runs one link through the extractors as its own root trace.
-func (r *Runner) check(parent context.Context, it Item) {
+// check runs one link through the extractors as its own root trace and returns
+// its outcome: ok, no_video, failed or canceled.
+func (r *Runner) check(parent context.Context, it Item) string {
 	var err error
 	ctx, cancel := context.WithTimeout(parent, checkTimeout)
 	defer cancel()
@@ -259,7 +283,7 @@ func (r *Runner) check(parent context.Context, it Item) {
 		}
 		delete(r.tested, it.URL)
 		r.mu.Unlock()
-		return
+		return "canceled"
 	case errors.Is(err, preview.ErrNoVideo):
 		// the post simply has nothing to download, which isn't an extractor failure
 		status, err = "no_video", nil
@@ -291,4 +315,5 @@ func (r *Runner) check(parent context.Context, it Item) {
 	} else {
 		fmt.Printf("canary: %s trace=%s site=%s extractor=%s metadata=%t url=%s after=%s\n", status, traceID, it.Site, res.Extractor, !res.Metadata.Empty(), it.URL, took.Round(time.Millisecond))
 	}
+	return status
 }

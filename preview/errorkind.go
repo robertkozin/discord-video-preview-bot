@@ -22,9 +22,9 @@ const (
 )
 
 var (
-	geoblockRe = regexp.MustCompile(`geoblock|cross_border|\b10231\b|UNPLAYABLE|not available in your`)
-	loginRe    = regexp.MustCompile(`login_required|login required|LOGIN_REQUIRED|session rejected|checkpoint|without login|needs a login|redirected to login|require_login`)
-	botRe      = regexp.MustCompile(`(?i)not a bot|bot check|challenge|captcha`)
+	geoblockRe = regexp.MustCompile(`geoblock|cross_border|\b10231\b|UNPLAYABLE|not available in your|(?i)IP address is blocked`)
+	loginRe    = regexp.MustCompile(`login_required|login required|LOGIN_REQUIRED|session rejected|checkpoint|without login|needs a login|redirected to login|require_login|(?i)sign in to confirm your age`)
+	botRe      = regexp.MustCompile(`(?i)not a bot|bot check|challenge|captcha|verify you are human`)
 	privateRe  = regexp.MustCompile(`(?i)\bprivate\b|\b10216\b|\b10222\b|status_self_see`)
 	rateRe     = regexp.MustCompile(`\b429\b|(?i)too many requests|rate limit`)
 	timeoutRe  = regexp.MustCompile(`(?i)timed out|timeout|deadline exceeded|stalled`)
